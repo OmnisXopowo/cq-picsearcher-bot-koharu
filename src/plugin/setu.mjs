@@ -113,15 +113,15 @@ function sendSetu(context, reply = true) {
       const preSendMsgs = [];
 
       if (setting.sendUrls || onlySendUrl) {
-        preSendMsgs.push(`https://pixiv.net/i/${setu.pid} (p${setu.p})`);
+        preSendMsgs.push(`原图地址：https://pixiv.net/i/${setu.pid} (p${setu.p})`);
         if (setting.sendPximgProxies.length) {
           const sendUrls = [];
           for (const imgProxy of setting.sendPximgProxies) {
             const imgUrl = getSetuUrlByTemplate(imgProxy, setu, setu.urls.original);
             sendUrls.push((await urlShorten(setting.shortenPximgProxy, imgUrl)).result);
           }
-          if (sendUrls.length === 1) preSendMsgs.push(`原图地址：${sendUrls[0]}`);
-          else preSendMsgs.push('原图地址：', ...sendUrls);
+          if (sendUrls.length === 1) preSendMsgs.push(`代理地址：${sendUrls[0]}`);
+          else preSendMsgs.push('代理地址：', ...sendUrls);
         }
       }
 

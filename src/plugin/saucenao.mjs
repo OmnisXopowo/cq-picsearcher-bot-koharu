@@ -154,7 +154,7 @@ async function doSearch(imgURL, db, debug = false) {
           // 回复的消息
           msg = await getShareText({
             url: CQ.escape(url),
-            title: [`SauceNAO (${simText}%)`, CQ.escape(title)].filter(v => v).join('\n'),
+            title: [`相似度 (${simText}%)`, CQ.escape(title)].filter(v => v).join('\n'),
             thumbnail: hideThumbnail ? null : thumbnail,
             author_url: member_id && url.indexOf('pixiv.net') >= 0 ? `https://pixiv.net/u/${member_id}` : null,
             source: CQ.escape(source),
@@ -234,7 +234,7 @@ async function getShareText({ url, title, thumbnail, author_url, source }) {
     else texts.push(await getCqImg64FromUrl(thumbnail));
   }
   if (url) texts.push(confuseURL(url));
-  if (author_url) texts.push(`Author: ${confuseURL(author_url)}`);
+  if (author_url) texts.push(`作者: ${confuseURL(author_url)}`);
   if (source) texts.push(confuseURL(source));
   return texts.join('\n');
 }
