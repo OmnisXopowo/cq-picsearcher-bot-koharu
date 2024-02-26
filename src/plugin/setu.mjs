@@ -1,6 +1,6 @@
 import { URL } from 'url';
 import Jimp from 'jimp';
-import _ from 'lodash-es';
+import _, { result } from 'lodash-es';
 import NamedRegExp from 'named-regexp-groups';
 import urlShorten from '../urlShorten/index.mjs';
 import Axios from '../utils/axiosProxy.mjs';
@@ -10,7 +10,7 @@ import logError from '../utils/logError.mjs';
 import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
 
-const API_URL = 'https://api.lolicon.app/setu/v2';
+const API_URLs = ['https://api.lolicon.app/setu/v2', 'https://lolisuki.cn/api/setu/v1', 'https://setu.yuban10703.xyz/setu']
 
 const PIXIV_404 = Symbol('Pixiv image 404');
 
@@ -40,7 +40,7 @@ async function getAntiShieldingBase64(url, fallbackUrl) {
   if (checkBase64RealSize(m1200Base64)) return m1200Base64;
 }
 
-function sendSetu(context, reply = true) {
+async function sendSetu(context, reply = true) {
   const setuReg = new NamedRegExp(global.config.bot.regs.setu);
   const setuRegExec = setuReg.exec(CQ.unescape(context.message));
   if (!setuRegExec) return false;
@@ -97,97 +97,106 @@ function sendSetu(context, reply = true) {
   }
 
   let success = false;
-  Axios.post(API_URL, { r18, tag: keyword, size: ['original', 'regular'], proxy: null })
-    .then(ret => ret.data)
-    .then(async ret => {
-      if (ret.error) return global.replyMsg(context, ret.error, false, reply);
-      if (!ret.data.length) return global.replyMsg(context, replys.setuNotFind, false, reply);
-
-      const setu = ret.data[0];
-      const setuUrl = setting.size1200 ? setu.urls.regular : setu.urls.original;
-      const onlySendUrl =
-        r18 &&
-        setting.r18OnlyUrl[
-          context.message_type === 'private' && context.sub_type !== 'friend' ? 'temp' : context.message_type
-        ];
-      const preSendMsgs = [];
-
-      if (setting.sendUrls || onlySendUrl) {
-        preSendMsgs.push(`原图地址：https://pixiv.net/i/${setu.pid} (p${setu.p})`);
-        if (setting.sendPximgProxies.length) {
-          const sendUrls = [];
-          for (const imgProxy of setting.sendPximgProxies) {
-            const imgUrl = getSetuUrlByTemplate(imgProxy, setu, setu.urls.original);
-            sendUrls.push((await urlShorten(setting.shortenPximgProxy, imgUrl)).result);
-          }
-          if (sendUrls.length === 1) preSendMsgs.push(`代理地址：${sendUrls[0]}`);
-          else preSendMsgs.push('代理地址：', ...sendUrls);
-        }
+  shuffle(API_URLs);
+  let ret;
+  try {
+    for (let api of API_URLs) {
+      await Axios.post(api, { r18, tag: keyword, size: ['original', 'regular'], proxy: null })
+      .then(result => ret = result.data)
+      if ((!ret.error) && (ret.data.length)) {
+        console.log(`API[${api}]`);
+        break;
       }
+    }
 
-      if (onlySendUrl) {
-        global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
-        return;
+  if (ret.error) return global.replyMsg(context, ret.error, false, reply);
+  if (!ret.data.length) return global.replyMsg(context, replys.setuNotFind, false, reply);
+
+  const setu = ret.data[0];
+  setu.urls.regular = setu.urls.regular ? setu.urls.regular : setu.urls.medium;
+  setu.page = (setu.page === undefined ? setu.p :setu.page);
+  const setuUrl = setting.size1200 ?    setu.urls.regular : setu.urls.original;
+  const onlySendUrl =
+    r18 &&
+    setting.r18OnlyUrl[
+    context.message_type === 'private' && context.sub_type !== 'friend' ? 'temp' : context.message_type
+    ];
+  const preSendMsgs = [];
+
+  if (setting.sendUrls || onlySendUrl) {
+    preSendMsgs.push(`原图：https://pixiv.net/i/${setu.pid} (p${setu.p})`);
+    if (setting.sendPximgProxies.length) {
+      const sendUrls = [];
+      for (const imgProxy of setting.sendPximgProxies) {
+        const imgUrl = getSetuUrlByTemplate(imgProxy, setu, setu.urls.original);
+        sendUrls.push((await urlShorten(setting.shortenPximgProxy, imgUrl)).result);
       }
-      if (privateR18) preSendMsgs.push('※ 图片将私聊发送');
-      global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
+      if (sendUrls.length === 1) preSendMsgs.push(`代理：${sendUrls[0]}`);
+      else preSendMsgs.push('代理：', ...sendUrls);
+    }
+  }
 
-      const getReqUrl = url => (proxy ? getSetuUrlByTemplate(proxy, setu, url) : getLocalReverseProxyURL(url));
-      const url = getReqUrl(setuUrl);
-      const fallbackUrl = setting.size1200 ? undefined : getReqUrl(setu.urls.regular);
+  if (onlySendUrl) {
+    global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
+    return;
+  }
+  if (privateR18) preSendMsgs.push('※ 图片将私聊发送');
+  global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
 
-      // 反和谐
-      const base64 =
-        !privateR18 &&
-        isGroupMsg &&
-        setting.antiShielding > 0 &&
-        (await getAntiShieldingBase64(url, fallbackUrl).catch(e => {
-          console.error('[error] anti shielding');
-          console.error(url);
-          logError(e);
-          if (String(e).includes('Could not find MIME for Buffer') || String(e).includes('status code 404')) {
-            return PIXIV_404;
-          }
-          global.replyMsg(context, '反和谐发生错误，图片将原样发送，详情请查看错误日志');
-        }));
+  const getReqUrl = url => (proxy ? getSetuUrlByTemplate(proxy, setu, url) : getLocalReverseProxyURL(url));
+  const url = getReqUrl(setuUrl);
+  const fallbackUrl = setting.size1200 ? undefined : getReqUrl(setu.urls.regular);
 
-      if (base64 === PIXIV_404) {
-        global.replyMsg(context, '图片发送失败，可能是网络问题/插画已被删除/原图地址失效');
-        return;
-      }
-
-      const imgType = delTime === -1 ? 'flash' : null;
-      if (privateR18) {
-        global.bot('send_private_msg', {
-          user_id: context.user_id,
-          group_id: setting.r18OnlyPrivateAllowTemp ? context.group_id : undefined,
-          message: CQ.img(url, imgType),
-        });
-      } else {
-        global
-          .replyMsg(context, base64 ? CQ.img64(base64, imgType) : CQ.img(url, imgType))
-          .then(r => {
-            const message_id = _.get(r, 'data.message_id');
-            if (delTime > 0 && message_id)
-              setTimeout(() => {
-                global.bot('delete_msg', { message_id });
-              }, delTime * 1000);
-          })
-          .catch(e => {
-            console.error('[error] delete msg');
-            logError(e);
-          });
-      }
-      success = true;
-    })
-    .catch(e => {
-      console.error('[error]');
+  // 反和谐
+  const base64 =
+    !privateR18 &&
+    isGroupMsg &&
+    setting.antiShielding > 0 &&
+    (await getAntiShieldingBase64(url, fallbackUrl).catch(e => {
+      console.error('[error] anti shielding');
+      console.error(url);
       logError(e);
-      global.replyMsg(context, replys.setuError, false, reply);
-    })
-    .finally(() => {
-      if (!success) logger.releaseQuota(context.user_id, 'setu');
+      if (String(e).includes('Could not find MIME for Buffer') || String(e).includes('status code 404')) {
+        return PIXIV_404;
+      }
+      global.replyMsg(context, '反和谐发生错误，图片将原样发送，详情请查看错误日志');
+    }));
+
+  if (base64 === PIXIV_404) {
+    global.replyMsg(context, '图片发送失败，可能是网络问题/插画已被删除/原图地址失效');
+    return;
+  }
+
+  const imgType = delTime === -1 ? 'flash' : null;
+  if (privateR18) {
+    global.bot('send_private_msg', {
+      user_id: context.user_id,
+      group_id: setting.r18OnlyPrivateAllowTemp ? context.group_id : undefined,
+      message: CQ.img(url, imgType),
     });
+  } else {
+    global
+      .replyMsg(context, base64 ? CQ.img64(base64, imgType) : CQ.img(url, imgType))
+      .then(r => {
+        const message_id = _.get(r, 'data.message_id');
+        if (delTime > 0 && message_id)
+          setTimeout(() => {
+            global.bot('delete_msg', { message_id });
+          }, delTime * 1000);
+      })
+      .catch(e => {
+        console.error('[error] delete msg');
+        logError(e);
+      });
+  }
+  success = true;
+}
+catch (err) {
+  logError(err);
+  global.replyMsg(context, replys.setuError, false, reply);
+} finally {
+  if (!success) logger.releaseQuota(context.user_id, 'setu');
+}
 
   return true;
 }
@@ -198,4 +207,17 @@ function getSetuUrlByTemplate(tpl, setu, url) {
   const path = new URL(url).pathname.replace(/^\//, '');
   if (!/{{.+}}/.test(tpl)) return new URL(path, tpl).href;
   return _.template(tpl, { interpolate: /{{([\s\S]+?)}}/g })({ path, ..._.pick(setu, ['pid', 'p', 'uid', 'ext']) });
+}
+
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    let j = Math.floor(Math.random() * (i + 1)); // 从 0 到 i 的随机索引
+
+    // 交换元素 array[i] 和 array[j]
+    // 我们使用“解构分配（destructuring assignment）”语法来实现它
+    // 你将在后面的章节中找到有关该语法的更多详细信息
+    // 可以写成：
+    // let t = array[i]; array[i] = array[j]; array[j] = t
+    [array[i], array[j]] = [array[j], array[i]];
+  }
 }
