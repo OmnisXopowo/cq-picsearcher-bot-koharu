@@ -330,7 +330,7 @@ async function privateAndAtMsg(e, context) {
         console.log(`收到私聊消息 qq=${context.user_id}`);
         break;
       case 'group':
-        console.log(`收到群组@消息 group=${context.group_id} qq=${context.user_id}`);
+        console.log(`收到群组消息 group=${context.group_id} qq=${context.user_id}`);
         break;
       case 'guild':
         console.log(`收到频道消息 guild=${context.guild_id} channel=${context.channel_id} tinyId=${context.user_id}`);

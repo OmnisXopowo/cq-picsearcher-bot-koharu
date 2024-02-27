@@ -11,38 +11,35 @@ import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
 
 const API_URLs = [lolicon, lolisuki, yuban10703];
-
 const PIXIV_404 = Symbol('Pixiv image 404');
 
-async function lolicon(r18,keyword){
+async function lolicon(r18, keyword) {
   const api = 'https://api.lolicon.app/setu/v2';
-  const result = await Axios.post(api, { r18, tag: keyword});
+  const result = await Axios.post(api, { r18, tag: keyword,size: ['original', 'regular'] });
   return result;
 }
 
-async function lolisuki(r18,keyword){
+async function lolisuki(r18, keyword) {
   const api = 'https://lolisuki.cn/api/setu/v1';
-  const result = await Axios.post(api, { r18, tag: keyword});
+  const result = await Axios.post(api, { r18, tag: keyword });
   return result;
 }
 
-async function yuban10703(r18,keyword){
+ async function yuban10703(r18, keyword) {
   const api = 'https://setu.yuban10703.xyz/setu';
-  const result = await Axios.post(api, { r18, tags: keyword})
-  .catch(function (error) {
-    return error.response;
-  });
-  if(result.status == 404){
-    result.data.error = false;
-    result.data = [];
+  const result = await Axios.post(api, { r18, tags: keyword })
+    .catch(function (error) {
+      return error.response;
+    });
+  if (result.status == 404) {
+    result.data = {};
     result.data.data = [];
     return result
   }
-  
 
-  result.data.urls.regular = result.data.urls.large;
-  result.data[0].p = result.data[0].page;
-  result.error = result.detail;
+  result.data.data[0].urls.regular = result.data.data[0].urls.large;
+  result.data.data[0].p = result.data.data[0].page;
+  result.data.error = result.data.detail;
   return result;
 }
 
@@ -73,7 +70,7 @@ async function getAntiShieldingBase64(url, fallbackUrl) {
   if (checkBase64RealSize(m1200Base64)) return m1200Base64;
 }
 
-async function sendSetu(context, reply = true) {
+function sendSetu(context, reply = true) {
   const setuReg = new NamedRegExp(global.config.bot.regs.setu);
   const setuRegExec = setuReg.exec(CQ.unescape(context.message));
   if (!setuRegExec) return false;
@@ -129,104 +126,107 @@ async function sendSetu(context, reply = true) {
     return true;
   }
 
+
   let success = false;
   shuffle(API_URLs);
   let ret;
-  try {
-    for (let api of API_URLs) {
-      await api(r18,keyword).then(result => ret = result.data);    
-      if ((!ret.error) && (ret.data.length)) {
-        break;
+  async function getapi(){
+    try {
+      for (let api of API_URLs) {
+        await api(r18, keyword).then(result => ret = result.data);
+        if ((!ret.error) && (ret.data.length)) {
+          console.log(`setuAPI：[${api.name}]`);
+          break;
+        }
       }
+      if (ret.error) return global.replyMsg(context, ret.error, false, reply);
+      if (!ret.data.length) return global.replyMsg(context, replys.setuNotFind, false, reply);
+
+      const setu = ret.data[0];
+      const setuUrl = setting.size1200 ? setu.urls.regular : setu.urls.original;
+      const onlySendUrl =
+        r18 &&
+        setting.r18OnlyUrl[
+        context.message_type === 'private' && context.sub_type !== 'friend' ? 'temp' : context.message_type
+        ];
+      const preSendMsgs = [];
+
+      if (setting.sendUrls || onlySendUrl) {
+        preSendMsgs.push(`原图：https://pixiv.net/i/${setu.pid} (p${setu.p})`);
+        if (setting.sendPximgProxies.length) {
+          const sendUrls = [];
+          for (const imgProxy of setting.sendPximgProxies) {
+            const imgUrl = getSetuUrlByTemplate(imgProxy, setu, setu.urls.original);
+            sendUrls.push((await urlShorten(setting.shortenPximgProxy, imgUrl)).result);
+          }
+          if (sendUrls.length === 1) preSendMsgs.push(`代理：${sendUrls[0]}`);
+          else preSendMsgs.push('代理：', ...sendUrls);
+        }
+      }
+
+      if (onlySendUrl) {
+        global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
+        return;
+      }
+      if (privateR18) preSendMsgs.push('※ 图片将私聊发送');
+      global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
+
+      const getReqUrl = url => (proxy ? getSetuUrlByTemplate(proxy, setu, url) : getLocalReverseProxyURL(url));
+      const url = getReqUrl(setuUrl);
+      const fallbackUrl = setting.size1200 ? undefined : getReqUrl(setu.urls.regular);
+
+      // 反和谐
+      const base64 =
+        !privateR18 &&
+        isGroupMsg &&
+        setting.antiShielding > 0 &&
+        (await getAntiShieldingBase64(url, fallbackUrl).catch(e => {
+          console.error('[error] anti shielding');
+          console.error(url);
+          logError(e);
+          if (String(e).includes('Could not find MIME for Buffer') || String(e).includes('status code 404')) {
+            return PIXIV_404;
+          }
+          global.replyMsg(context, '反和谐发生错误，图片将原样发送，详情请查看错误日志');
+        }));
+
+      if (base64 === PIXIV_404) {
+        global.replyMsg(context, '图片发送失败，可能是网络问题/插画已被删除/原图地址失效');
+        return;
+      }
+
+      const imgType = delTime === -1 ? 'flash' : null;
+      if (privateR18) {
+        global.bot('send_private_msg', {
+          user_id: context.user_id,
+          group_id: setting.r18OnlyPrivateAllowTemp ? context.group_id : undefined,
+          message: CQ.img(url, imgType),
+        });
+      } else {
+        global
+          .replyMsg(context, base64 ? CQ.img64(base64, imgType) : CQ.img(url, imgType))
+          .then(r => {
+            const message_id = _.get(r, 'data.message_id');
+            if (delTime > 0 && message_id)
+              setTimeout(() => {
+                global.bot('delete_msg', { message_id });
+              }, delTime * 1000);
+          })
+          .catch(e => {
+            console.error('[error] delete msg');
+            logError(e);
+          });
+      }
+      success = true;
     }
-
-  if (ret.error) return global.replyMsg(context, ret.error, false, reply);
-  if (!ret.data.length) return global.replyMsg(context, replys.setuNotFind, false, reply);
-
-  const setu = ret.data[0];
-  const setuUrl = setting.size1200 ?    setu.urls.regular : setu.urls.original;
-  const onlySendUrl =
-    r18 &&
-    setting.r18OnlyUrl[
-    context.message_type === 'private' && context.sub_type !== 'friend' ? 'temp' : context.message_type
-    ];
-  const preSendMsgs = [];
-
-  if (setting.sendUrls || onlySendUrl) {
-    preSendMsgs.push(`原图：https://pixiv.net/i/${setu.pid} (p${setu.p})`);
-    if (setting.sendPximgProxies.length) {
-      const sendUrls = [];
-      for (const imgProxy of setting.sendPximgProxies) {
-        const imgUrl = getSetuUrlByTemplate(imgProxy, setu, setu.urls.original);
-        sendUrls.push((await urlShorten(setting.shortenPximgProxy, imgUrl)).result);
-      }
-      if (sendUrls.length === 1) preSendMsgs.push(`代理：${sendUrls[0]}`);
-      else preSendMsgs.push('代理：', ...sendUrls);
+    catch (err) {
+      logError(err);
+      global.replyMsg(context, replys.setuError, false, reply);
+    } finally {
+      if (!success) logger.releaseQuota(context.user_id, 'setu');
     }
   }
-
-  if (onlySendUrl) {
-    global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
-    return;
-  }
-  if (privateR18) preSendMsgs.push('※ 图片将私聊发送');
-  global.replyMsg(context, preSendMsgs.join('\n'), false, reply);
-
-  const getReqUrl = url => (proxy ? getSetuUrlByTemplate(proxy, setu, url) : getLocalReverseProxyURL(url));
-  const url = getReqUrl(setuUrl);
-  const fallbackUrl = setting.size1200 ? undefined : getReqUrl(setu.urls.regular);
-
-  // 反和谐
-  const base64 =
-    !privateR18 &&
-    isGroupMsg &&
-    setting.antiShielding > 0 &&
-    (await getAntiShieldingBase64(url, fallbackUrl).catch(e => {
-      console.error('[error] anti shielding');
-      console.error(url);
-      logError(e);
-      if (String(e).includes('Could not find MIME for Buffer') || String(e).includes('status code 404')) {
-        return PIXIV_404;
-      }
-      global.replyMsg(context, '反和谐发生错误，图片将原样发送，详情请查看错误日志');
-    }));
-
-  if (base64 === PIXIV_404) {
-    global.replyMsg(context, '图片发送失败，可能是网络问题/插画已被删除/原图地址失效');
-    return;
-  }
-
-  const imgType = delTime === -1 ? 'flash' : null;
-  if (privateR18) {
-    global.bot('send_private_msg', {
-      user_id: context.user_id,
-      group_id: setting.r18OnlyPrivateAllowTemp ? context.group_id : undefined,
-      message: CQ.img(url, imgType),
-    });
-  } else {
-    global
-      .replyMsg(context, base64 ? CQ.img64(base64, imgType) : CQ.img(url, imgType))
-      .then(r => {
-        const message_id = _.get(r, 'data.message_id');
-        if (delTime > 0 && message_id)
-          setTimeout(() => {
-            global.bot('delete_msg', { message_id });
-          }, delTime * 1000);
-      })
-      .catch(e => {
-        console.error('[error] delete msg');
-        logError(e);
-      });
-  }
-  success = true;
-}
-catch (err) {
-  logError(err);
-  global.replyMsg(context, replys.setuError, false, reply);
-} finally {
-  if (!success) logger.releaseQuota(context.user_id, 'setu');
-}
-
+  getapi();
   return true;
 }
 
