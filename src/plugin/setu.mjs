@@ -10,9 +10,42 @@ import logError from '../utils/logError.mjs';
 import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
 
-const API_URLs = ['https://api.lolicon.app/setu/v2', 'https://lolisuki.cn/api/setu/v1', 'https://setu.yuban10703.xyz/setu']
+const API_URLs = [lolicon, lolisuki, yuban10703];
 
 const PIXIV_404 = Symbol('Pixiv image 404');
+
+async function lolicon(r18,keyword){
+  const api = 'https://api.lolicon.app/setu/v2';
+  const result = await Axios.post(api, { r18, tag: keyword});
+  return result;
+}
+
+async function lolisuki(r18,keyword){
+  const api = 'https://lolisuki.cn/api/setu/v1';
+  const result = await Axios.post(api, { r18, tag: keyword});
+  return result;
+}
+
+async function yuban10703(r18,keyword){
+  const api = 'https://setu.yuban10703.xyz/setu';
+  const result = await Axios.post(api, { r18, tags: keyword})
+  .catch(function (error) {
+    return error.response;
+  });
+  if(result.status == 404){
+    result.data.error = false;
+    result.data = [];
+    result.data.data = [];
+    return result
+  }
+  
+
+  result.data.urls.regular = result.data.urls.large;
+  result.data[0].p = result.data[0].page;
+  result.error = result.detail;
+  return result;
+}
+
 
 async function dlImgAndAntiShielding(url) {
   const setting = global.config.bot.setu;
@@ -101,10 +134,8 @@ async function sendSetu(context, reply = true) {
   let ret;
   try {
     for (let api of API_URLs) {
-      await Axios.post(api, { r18, tag: keyword, size: ['original', 'regular'], proxy: null })
-      .then(result => ret = result.data)
+      await api(r18,keyword).then(result => ret = result.data);    
       if ((!ret.error) && (ret.data.length)) {
-        console.log(`API[${api}]`);
         break;
       }
     }
@@ -113,8 +144,6 @@ async function sendSetu(context, reply = true) {
   if (!ret.data.length) return global.replyMsg(context, replys.setuNotFind, false, reply);
 
   const setu = ret.data[0];
-  setu.urls.regular = setu.urls.regular ? setu.urls.regular : setu.urls.medium;
-  setu.page = (setu.page === undefined ? setu.p :setu.page);
   const setuUrl = setting.size1200 ?    setu.urls.regular : setu.urls.original;
   const onlySendUrl =
     r18 &&
