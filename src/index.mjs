@@ -188,7 +188,7 @@ async function commonHandle(e, context) {
     if (await chatgpt(context)) return true;
   }
 
-  // chatgpt
+  // vits
   if (global.config.bot.vits.enable) {
     if (await vits(context)) return true;
   }
@@ -330,10 +330,10 @@ async function privateAndAtMsg(e, context) {
         console.log(`收到私聊消息 qq=${context.user_id}`);
         break;
       case 'group':
-        console.log(`收到群组消息 group=${context.group_id} qq=${context.user_id}`);
+        console.log(`收到群组@消息 group=${context.group_id} qq=${context.user_id}`);
         break;
       case 'guild':
-        console.log(`收到频道消息 guild=${context.guild_id} channel=${context.channel_id} tinyId=${context.user_id}`);
+        console.log(`收到频道@消息 guild=${context.guild_id} channel=${context.channel_id} tinyId=${context.user_id}`);
         break;
     }
     console.log(debugMsgDeleteBase64Content(context.message));
@@ -346,6 +346,7 @@ async function privateAndAtMsg(e, context) {
 
   if (context.message_type === 'group') {
     try {
+      //判断是否是回复的消息
       const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
       if (rMsgId) {
         const { data } = await bot('get_msg', { message_id: Number(rMsgId) });
@@ -366,7 +367,11 @@ async function privateAndAtMsg(e, context) {
           return;
         }
       }
-    } catch (error) {}
+    } catch (error) {
+      if (global.config.bot.debug) {
+        console.log(error);
+      }
+    }
   }
 
   // 转换原图
@@ -375,7 +380,7 @@ async function privateAndAtMsg(e, context) {
     return;
   }
 
-  if (hasImage(context.message)) {
+  if (hasImage(context)) {
     // 搜图
     e.stopPropagation();
     searchImg(context);
@@ -709,12 +714,22 @@ function doAkhr(context) {
  * @returns {Array<{ file: string; url: string; }>} 图片URL数组
  */
 function getImgs(msg) {
-  const cqImgs = CQ.from(msg).filter(cq => cq.type === 'image');
-  return cqImgs.map(cq => {
-    const data = cq.pickData(['file', 'url']);
-    data.url = getUniversalImgURL(data.url || data.file);
-    return data;
-  });
+  if (Array.isArray(msg)) {
+    const cqImgs = msg.filter(item => item.type === 'image');
+    return cqImgs.map(item => {
+      return {
+        file: item.data.file,
+        url: getUniversalImgURL(item.data.url || item.data.file)
+      };
+    });
+  } else {
+    const cqImgs = CQ.from(msg).filter(cq => cq.type === 'image');
+    return cqImgs.map(cq => {
+      const data = cq.pickData(['file', 'url']);
+      data.url = getUniversalImgURL(data.url || data.file);
+      return data;
+    });
+  }
 }
 
 /**
@@ -724,7 +739,8 @@ function getImgs(msg) {
  * @returns 有则返回true
  */
 function hasImage(msg) {
-  return msg.indexOf('[CQ:image') !== -1;
+  return msg.message.indexOf('[CQ:image') !== -1;
+
 }
 
 /**
