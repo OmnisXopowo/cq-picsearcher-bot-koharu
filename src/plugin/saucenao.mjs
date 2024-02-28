@@ -154,7 +154,7 @@ async function doSearch(imgURL, db, debug = false) {
           // 回复的消息
           msg = await getShareText({
             url: CQ.escape(url),
-            title: [`相似度 (${simText}%)`, CQ.escape(title)].filter(v => v).join('\n'),
+            title: [`相似度:${simText}%`, CQ.escape(title)].filter(v => v).join('\n'),
             thumbnail: hideThumbnail ? null : thumbnail,
             author_url: member_id && url.indexOf('pixiv.net') >= 0 ? `https://pixiv.net/u/${member_id}` : null,
             source: CQ.escape(source),

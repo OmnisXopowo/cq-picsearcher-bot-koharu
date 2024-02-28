@@ -380,7 +380,7 @@ async function privateAndAtMsg(e, context) {
     return;
   }
 
-  if (hasImage(context)) {
+  if (hasImage(context.message)) {
     // 搜图
     e.stopPropagation();
     searchImg(context);
@@ -739,7 +739,7 @@ function getImgs(msg) {
  * @returns 有则返回true
  */
 function hasImage(msg) {
-  return msg.message.indexOf('[CQ:image') !== -1;
+  return msg.indexOf('[CQ:image') !== -1;
 
 }
 
@@ -1010,6 +1010,6 @@ function handleOriginImgConvert(ctx) {
 
 function originImgConvert(ctx) {
   const cqImgs = CQ.from(ctx.message).filter(cq => cq.type === 'image');
-  const imgs = cqImgs.map(cq => CQ.img(cq.get('file')));
-  replyMsg(ctx, imgs.join(''), false, false);
+  const imgs = cqImgs.map(cq => CQ.img(cq.get('url')));
+  replyMsg(ctx, imgs.map(str=>CQ.unescape(str)).join(''), false, false);
 }

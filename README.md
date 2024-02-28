@@ -6,7 +6,7 @@
 
 这是一个以 Node.js 编写的酷Q机器人程序，用于搜图、搜番、搜本子，并夹带了许多娱乐向功能（。）
 
-本项目可以连接支持 [OneBot 11](https://github.com/botuniverse/onebot-11) 标准的机器人客户端，例如 [go-cqhttp](https://github.com/Mrs4s/go-cqhttp) 和 [OpenShamrock](https://github.com/whitechi73/OpenShamrock) 等
+本项目可以连接支持 [OneBot 11](https://github.com/botuniverse/onebot-11) 标准的机器人客户端，本分支专注于 [OpenShamrock](https://github.com/whitechi73/OpenShamrock) 的连接
 
 目前支持的搜图服务：
 
