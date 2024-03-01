@@ -21,7 +21,7 @@ async function lolicon(r18, keyword) {
 
 async function lolisuki(r18, keyword) {
   const api = 'https://lolisuki.cn/api/setu/v1';
-  const result = await Axios.post(api, { r18, tag: keyword });
+  const result = await Axios.post(api, { r18, tag: keyword ,ai:0});
   return result;
 }
 
