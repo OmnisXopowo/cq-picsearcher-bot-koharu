@@ -40,6 +40,7 @@ async function lolisuki(r18, keyword) {
   result.data.data[0].urls.regular = result.data.data[0].urls.large;
   result.data.data[0].p = result.data.data[0].page;
   result.data.error = result.data.detail;
+  result.data.data[0].pid = result.data.data[0].artwork.id
   return result;
 }
 
