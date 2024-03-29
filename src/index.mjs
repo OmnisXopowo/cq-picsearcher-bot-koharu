@@ -3,11 +3,10 @@ import Fs from 'fs-extra';
 import _ from 'lodash-es';
 import minimist from 'minimist';
 import RandomSeed from 'random-seed';
-import Akhr from './plugin/akhr/index.mjs';
 import ascii2d from './plugin/ascii2d.mjs';
 import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
-import chatgpt from './plugin/chatgpt.mjs';
+import characterglm from './plugin/characterglm/characterglm.mjs';
 import corpus from './plugin/corpus.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import like from './plugin/like.mjs';
@@ -183,9 +182,9 @@ async function commonHandle(e, context) {
     return true;
   }
 
-  // chatgpt
-  if (global.config.bot.chatgpt.enable) {
-    if (await chatgpt(context)) return true;
+  // characterglm
+  if (global.config.bot.characterglm.enable) {
+    if (await characterglm(context) || global.config.bot.AImode) return true;
   }
 
   // vits
@@ -281,13 +280,7 @@ function handleAdminMsg(context) {
     return true;
   }
 
-  // 明日方舟
-  if (args['update-akhr'] || args['akhr-update']) {
-    Akhr.updateData().then(success =>
-      replyMsg(context, success ? '方舟公招数据已更新' : '方舟公招数据更新失败，请查看错误日志')
-    );
-    return true;
-  }
+
 
   // 停止程序（使用 pm2 时相当于重启）
   if (args.shutdown) process.exit();
@@ -513,12 +506,6 @@ async function searchImg(context, customDB = -1) {
     return;
   }
 
-  // 明日方舟
-  if (hasWord('akhr') || hasWord('公招')) {
-    doAkhr(context);
-    return;
-  }
-
   // 决定搜索库
   let db = snDB[global.config.bot.saucenaoDefaultDB] || snDB.all;
   if (customDB < 0) {
@@ -676,34 +663,6 @@ function doOCR(context) {
         console.error('[error] OCR');
         logError(e);
       });
-  }
-}
-
-function doAkhr(context) {
-  if (global.config.bot.akhr.enable) {
-    if (!Akhr.isDataReady()) {
-      replyMsg(context, '数据尚未准备完成，请等待一会，或查看日志以检查数据拉取是否出错');
-      return;
-    }
-
-    const msg = context.message;
-    const imgs = getImgs(msg);
-
-    const handleWords = words => {
-      replyMsg(context, CQ.img64(Akhr.getResultImg(words)));
-    };
-
-    const handleError = e => {
-      replyMsg(context, '词条识别出现错误：\n' + e);
-      console.error('[error] Akhr');
-      logError(e);
-    };
-
-    for (const img of imgs) {
-      ocr.akhr(img, 'chs').then(handleWords).catch(handleError);
-    }
-  } else {
-    replyMsg(context, '该功能未开启');
   }
 }
 
