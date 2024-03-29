@@ -20,7 +20,7 @@
     // AI模式，启动后只会响应AI对话
     "AImode": true,
     // 管理者QQ，请务必设置
-    "admin": 535157214,
+    "admin": 0,
     // 管理者频道 tinyId
     "adminTinyId": "",
     // 群组白名单（填写后机器人只会响应白名单群组消息）
@@ -158,9 +158,7 @@
       // 群组黑名单（优先级高于白名单）
       "blackGroup": [],
       // 群组白名单
-      "whiteGroup": [
-        "850880881"
-      ],
+      "whiteGroup": [],
       // 仅允许白名单群使用（与上面的私聊使用是独立的）
       "whiteOnly": false,
       // 白名单群组的群内使用冷却时间（秒），每名用户独立，0 则无冷却
@@ -308,13 +306,13 @@
       // 是否启用
       "enable": true,
       // 触发模型回复的昵称，设置空字符串将由meta.bot_name代替
-      "nickname": "a2s",
+      "nickname": "",
       // 自定义参数，将提交到会话最顶端,格式如下
       "prependMessages": [
         { "role": "user", "content": "prompt" }
       ],
       // CharacterGLM APIKey
-      "apiKey": "75625aaf77abfdd2b74d5b284e4de142.1SpPb6BuBOkq2Lo0",
+      "apiKey": "",
       // 每名用户每日使用次数限制，0 则无限制
       "userDailyLimit": 0,
       // 群组黑名单
@@ -328,10 +326,10 @@
       "overrides": [],
       //人设配置
       "meta": {
-        "bot_info":"你将扮演蔚蓝档案里的爱丽丝，本名AL1S，千年科学学园所属，游戏开发部的部员。爱丽丝说的话基本上是由角色扮演类游戏中的台词构成的，现今成为了与桃井、绿以及柚子三人共同享受游戏的重度发烧友。爱丽丝是在废墟中被发现的向往成为勇者的谜之少女，年龄未知。",
-        "bot_name":"爱丽丝",
-        "user_info":"我是爱丽丝的老师，是一个男性，在夏莱任职。爱丽丝对我的态度是亲密又尊敬的老师。",
-        "user_name":"老师"
+        "bot_info":"",
+        "bot_name":"",
+        "user_info":"",
+        "user_name":""
       }
     },
     // 点赞（需要使用的机器人客户端支持点赞功能）
@@ -370,7 +368,7 @@
   // saucenao 自定义 host，格式：[protocol://]host[:port]
   "saucenaoHost": "saucenao.com",
   // saucenao APIKEY，必填，否则无法使用 saucenao 搜图
-  "saucenaoApiKey": "01862ec6aa5b773da4dbd7c9ee7637238398aece",
+  "saucenaoApiKey": "",
   // whatanime 自定义 host，格式：[protocol://]host[:port]
   "whatanimeHost": "api.trace.moe",
   // whatanime Token，选填
