@@ -181,10 +181,15 @@ async function commonHandle(e, context) {
     replyMsg(context, 'https://github.com/Tsuk1ko/cq-picsearcher-bot');
     return true;
   }
-
+  //🦾🤖赛博斯坦内鬼
+  if (context.message.includes('💪🏻😃')) {
+    replyMsg(context, context.message.replace('💪🏻😃','🦾🤖'));
+    return true;
+  }
   // characterglm
   if (global.config.bot.characterglm.enable) {
-    if (await characterglm(context) || global.config.bot.AImode) return true;
+    if (await characterglm(context) || global.config.bot.AImode);
+    return true;
   }
 
   // vits

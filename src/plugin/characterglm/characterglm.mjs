@@ -22,7 +22,10 @@ emitter.onConfigLoad(() => {
 const getMatchAndConfig = text => {
   const globalConfig = global.config.bot.characterglm;
   let match;
-  if (text.includes(globalConfig.nickname)) {
+  if(text.startsWith(globalConfig.nickname)){
+    match = text.replace(globalConfig.nickname,"");
+  }
+  else if (text.includes(globalConfig.nickname)) {
     match = text.replace(globalConfig.nickname,globalConfig.meta.bot_name);
   }else if(text.includes(globalConfig.meta.bot_name)){
     match = text;
@@ -47,15 +50,17 @@ const getMatchAndConfig = text => {
 
 
 const callCharacterAPI = (prompt, config, context) => {
+  //群单例，群聊模式
+  const singleton = true;
 
   return retryAsync(async () => {
     const { debug } = global.config.bot;
-    if (prompt == "结束当前会话") {
-      deleteglmContent(context.group_id, context.user_id);
-      return '已清空会话'
+    if (prompt == "--r") {
+      deleteglmContent(context.group_id, singleton? '0':context.user_id);
+      return '已清空上下文'
     }
 
-    let content = getglmContent(context.group_id, context.user_id)
+    let content = getglmContent(context.group_id, singleton? '0':context.user_id)
 
     content.choices.push({ role: 'user', content: prompt });
 
@@ -91,29 +96,37 @@ const callCharacterAPI = (prompt, config, context) => {
     if (data.error) {
       const errorMsg = data.error.message;
       console.error('[characterglm] error:', errorMsg);
-      return `ERROR: ${errorMsg}`;
+      return `ERROR1: ${errorMsg}`;
     }
-    const choiceResponse = data.data.choices[0];
+    let returnMessage = '';
 
-    if (choiceResponse) {
-      choiceResponse.content = choiceResponse.content.replace(/(\"*)(\\n*)/g, '').trim();
-      content.choices.push(choiceResponse);
+    if (data.data.choices) {
+      const choiceResponses = data.data.choices.map(obj => {
+          let FormatResult = obj.content.replace(/(\"*)(\\n*)/g, '').trim();
+          returnMessage += FormatResult;
+          return {
+            ...obj,
+            content : FormatResult
+          };
+      })
+      content.choices.push(...choiceResponses);
+
       insertglmContent(context.group_id,
-        context.user_id,
+        singleton? '0':context.user_id,
         content.choices,
         data.data.request_id);
 
-      return choiceResponse.content;
+      return returnMessage;
     }
 
     console.log('[characterglm] unexpected response:', data);
-    return 'ERROR: 无回答';
-  }).catch(e => `ERROR: ${e.message}`);
+    return 'ERROR3: 无回答';
+  })
+  .catch(e => `ERROR2: ${e.message}`);
 };
 
 export default async context => {
   const { match, config } = getMatchAndConfig(context.message);
-
   if (!match) return false;
 
   if (context.group_id) {

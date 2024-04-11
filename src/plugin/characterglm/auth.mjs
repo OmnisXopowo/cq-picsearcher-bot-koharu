@@ -17,7 +17,7 @@ export function genToken(apiKey, expireSeconds = 24 * 3600) {
     };
     setInterval(update, expireSeconds - 120);
   }
-
+  
   return jwttoken;
 }
 
@@ -66,4 +66,3 @@ export function deleteglmContent(group, user) {
   const key = `${group}-${user}`;
   choicesCache.del(key)
 }
-
