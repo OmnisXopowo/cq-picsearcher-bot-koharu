@@ -23,12 +23,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Tsuk1ko/cq-picsearcher-bot.git"
+    "url": "git+https://github.com/Tsuk1ko/cq-picsearcher-bot-koharu.git"
   },
   "author": "JindaiKirin",
   "license": "GPL-3.0",
   "bugs": {
-    "url": "https://github.com/Tsuk1ko/cq-picsearcher-bot/issues"
+    "url": "https://github.com/Tsuk1ko/cq-picsearcher-bot-koharu/issues"
   },
   "homepage": "https://moe.best/projects/qq-robot-picfinder.html",
   "dependencies": {
