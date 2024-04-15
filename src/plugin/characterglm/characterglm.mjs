@@ -125,6 +125,85 @@ const callCharacterAPI = (prompt, config, context) => {
   .catch(e => `ERROR2: ${e.message}`);
 };
 
+const callGML4API = (prompt, config, context) => {
+  //群单例，群聊模式
+  const singleton = true;
+
+  return retryAsync(async () => {
+    const { debug } = global.config.bot;
+    if (prompt == "--r") {
+      deleteglmContent(context.group_id, singleton? '0':context.user_id);
+      return '已清空上下文'
+    }
+
+    let content = getglmContent(context.group_id, singleton? '0':context.user_id)
+
+    content.choices.push({ role: 'user', content: prompt });
+    
+    const param = {
+      model:'glm-4',
+      messages: [
+        ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
+        ...content.choices,
+      ],
+    };
+
+
+    if (content.request_id) {
+      param.request_id = content.request_id;
+    }else{
+      param.messages.unshift({ role: 'system', content: '你是游戏蔚蓝档案里的爱丽丝，千年科学学园所属游戏开发部的部员。说的话基本上是由怀旧向角色扮演类游戏中的台词构成的，现今成为了与桃井、绿以及柚子三人共同享受游戏的重度发烧友。爱丽丝是在废墟中被发现的向往成为勇者的谜之少女，年龄未知。' });
+    }
+
+    const jwttoken = createJWT(config.apiKey);
+
+    const headers = {
+      Authorization: jwttoken,
+      'Content-Type': 'application/json',
+    };
+
+
+    if (debug) console.log('[glm] params:', inspect(param, { depth: null }));
+
+    const { data } = await AxiosProxy.post('https://open.bigmodel.cn/api/paas/v4/chat/completions', param, {
+      headers,
+      validateStatus: status => 200 <= status && status < 500,
+    });
+    if (debug) console.log('[glm] response:', inspect(data, { depth: null }));
+
+    if (data.error) {
+      const errorMsg = data.error.message;
+      console.error('[glm] error:', errorMsg);
+      return `ERROR1: ${errorMsg}`;
+    }
+    let returnMessage = '';
+
+    if (data.choices) {
+      const choiceResponses = data.choices.map(obj => {
+          let FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+          returnMessage += FormatResult;
+          return {
+            ...obj.message,
+            content : FormatResult
+          };
+      })
+      content.choices.push(...choiceResponses);
+
+      insertglmContent(context.group_id,
+        singleton? '0':context.user_id,
+        content.choices,
+        data.request_id);
+
+      return returnMessage;
+    }
+
+    console.log('[glm] unexpected response:', data);
+    return 'ERROR3: 无回答';
+  })
+  .catch(e => `ERROR2: ${e.message}`);
+};
+
+
 export default async context => {
   const { match, config } = getMatchAndConfig(context.message);
   if (!match) return false;
@@ -153,8 +232,9 @@ export default async context => {
 
   if (global.config.bot.debug) console.log('[characterglm] prompt:', prompt);
 
-  const completion = await callCharacterAPI(prompt, config, context);
-
+  //const completion = await callCharacterAPI(prompt, config, context);
+  const completion = await callGML4API(prompt, config, context);
+  
   global.replyMsg(context, completion, false, true);
 
   return true;

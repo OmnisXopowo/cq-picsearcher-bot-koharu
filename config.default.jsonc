@@ -309,7 +309,7 @@
       "nickname": "",
       // 自定义参数，将提交到会话最顶端,格式如下
       "prependMessages": [
-        { "role": "user", "content": "prompt" }
+        //{ "role": "user", "content": "prompt" }
       ],
       // CharacterGLM APIKey
       "apiKey": "",
