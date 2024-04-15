@@ -33,16 +33,17 @@ const arrayToSetPaths = new Set([
   'bot.setu.whiteGroup',
   'bot.bilibili.blackGroup',
   'bot.bilibili.whiteGroup',
-  'bot.chatgpt.blackGroup',
-  'bot.chatgpt.whiteGroup',
+  'bot.characterglm.blackGroup',
+  'bot.characterglm.whiteGroup',
   'bot.vits.blackGroup',
   'bot.vits.whiteGroup',
 ]);
 const noCheckPaths = new Set([
   'bot.bilibili.push',
-  'bot.chatgpt.prependMessages',
-  'bot.chatgpt.additionParams',
-  'bot.chatgpt.overrides',
+  'bot.characterglm.prependMessages',
+  'bot.characterglm.additionParams',
+  'bot.characterglm.overrides',
+  'bot.characterglm.meta',
 ]);
 
 function recursiveCopy(c, dc, cc, dcc, parentPath = '') {

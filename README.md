@@ -19,13 +19,12 @@
 - 复读
 - 色图
 - OCR
-- 明日方舟公开招募计算
 - 定时提醒
 - 群发消息
 - 哔哩哔哩解析
 - 哔哩哔哩推送
 - 语言库（自动回复）
-- ChatGPT
+- characterglm
 - VITS 语音合成
 
 详细说明请移步 [wiki](https://github.com/Tsuk1ko/cq-picsearcher-bot/wiki)

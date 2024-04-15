@@ -11,6 +11,7 @@ export declare interface Config {
 
 declare interface Bot {
     debug: boolean;
+    AImode:boolean;
     admin: number;
     adminTinyId: string;
     whiteGroup: Set<number | string>;
@@ -61,7 +62,7 @@ declare interface Bot {
     reminder: Reminder;
     bilibili: Bilibili;
     corpus: any[];
-    chatgpt: Chatgpt;
+    characterglm: CharacterGLM;
     like: Like;
     vits: Vit;
 }
@@ -85,20 +86,22 @@ declare interface Like {
     adminDailyLike: number;
 }
 
-declare interface Chatgpt {
+declare interface CharacterGLM {
     enable: boolean;
-    regexp: string;
-    model: string;
-    useChatAPI: boolean;
-    maxTokens: number;
-    prependMessages: any[];
-    additionParams: AdditionParam;
+    nickname: string;
+    prependMessages: [{role: string, content: string}];
     apiKey: string;
-    organization: string;
     userDailyLimit: number;
     blackGroup: Set<number | string>;
     whiteGroup: Set<number | string>;
     overrides: any[];
+    meta: {
+          bot_info:string,
+          bot_name:string,
+          user_info:string,
+          user_name:string;
+        }
+      
 }
 
 declare type AdditionParam = Push;

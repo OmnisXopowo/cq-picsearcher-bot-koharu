@@ -1,6 +1,6 @@
 {
   "name": "cq-picsearcher-bot",
-  "version": "3.16.4",
+  "version": "3.16.6",
   "description": "二次元搜图机器人",
   "main": "index.mjs",
   "private": true,
@@ -38,6 +38,7 @@
     "@tsuk1ko/cq-websocket": "^3.0.0",
     "await-lock": "^2.2.2",
     "axios": "^1.6.5",
+    "chatglm": "^0.4.0",
     "cheerio": "^1.0.0-rc.12",
     "comment-json": "^4.2.3",
     "compare-versions": "^5.0.3",

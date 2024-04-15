@@ -5,20 +5,22 @@
   // momocow/node-cq-websocket 配置，请参考 https://yww.uy/5gGAq9
   "cqws": {
     "host": "127.0.0.1",
-    "port": 8080,
+    "port": 5800,
     "enableAPI": true,
     "enableEvent": true,
     "accessToken": "",
     "reconnection": true,
-    "reconnectionAttempts": 10,
+    "reconnectionAttempts": 2,
     "reconnectionDelay": 5000
   },
   // 机器人配置
   "bot": {
     // 调试模式，启用时只会响应来自 admin 的发言，方便独自测试，并且会为所有搜图行为默认添加 --debug 参数
     "debug": false,
+    // AI模式，启动后只会响应AI对话
+    "AImode": true,
     // 管理者QQ，请务必设置
-    "admin": -1,
+    "admin": 0,
     // 管理者频道 tinyId
     "adminTinyId": "",
     // 群组白名单（填写后机器人只会响应白名单群组消息）
@@ -87,7 +89,7 @@
     // 在私聊中，若结果消息有多条，采用合并转发方式发送搜图结果（频道不生效）
     "privateForwardSearchResult": false,
     // 在群组中，若结果消息有多条，采用合并转发方式发送搜图结果（频道不生效）
-    "groupForwardSearchResult": false,
+    "groupForwardSearchResult": true,
     // 大部分请求所使用的代理，支持 http(s):// 和 socks://
     "proxy": "",
     // 绕过 Cloudflare Challenge 所使用的 TLS 版本，建议可选值：["TLSv1.1", "TLSv1.2"]，作用详见 wiki (常见问题 - Ascii2d)
@@ -99,7 +101,7 @@
     // Canvas 库选择，可选值 ["auto", "@napi-rs/canvas", "canvas"] 详见 wiki
     "canvasLibrary": "auto",
     // 发送消息时不转义普通文本内容，可以解决某些机器人客户端没有严格按照 OneBot 标准进行反转义的问题
-    "disableMessageEscape": false,
+    "disableMessageEscape": true,
     // 搜图结果缓存，开启可节约 API 调用
     "cache": {
       // 是否启用
@@ -136,19 +138,21 @@
       // 发送时使用的P站本地反代服务地址，一般不需要，详见 wiki
       "usePximgAddr": "",
       // 发送时请求图片使用的P站在线反代服务地址，支持占位符 {{pid}} {{p}} {{uid}} {{ext}} {{path}}，详见 wiki（使用时上面三个配置将不再起效）
-      "pximgProxy": "",
+      "pximgProxy": "https://i.yuki.sh",
       // 是否发送图片链接（P站作品地址、原图镜像地址）
       "sendUrls": true,
       // 原图镜像地址，发送图片时一起发送的在线反向代理的原图地址，设置为空数组则不追加，支持占位符同上
-      "sendPximgProxies": [],
+      "sendPximgProxies": [
+        "https://i.pixiv.re"
+      ],
       // 对原图镜像地址进行短链接处理，可选值: ["oy.mk", "yww.uy"]，留空 "" 则不处理。
       "shortenPximgProxy": "",
       // 是否发送 master1200 大小的图片，以节省流量或加快发送速度，关闭时将发送原图
       "size1200": false,
       // 发送后这么多秒自动撤回（0 则不撤回，-1 为发送闪照）
-      "deleteTime": 60,
+      "deleteTime": 0,
       // 群内使用冷却时间（秒），每名用户独立，0 则无冷却，私聊无 cd
-      "cd": 600,
+      "cd": 1,
       // 每名用户每日次数限制（0 则无限制）
       "limit": 30,
       // 群组黑名单（优先级高于白名单）
@@ -160,7 +164,7 @@
       // 白名单群组的群内使用冷却时间（秒），每名用户独立，0 则无冷却
       "whiteCd": 0,
       // 白名单群组内发送后这么多秒自动撤回（0 则不撤回，-1 为发送闪照）
-      "whiteDeleteTime": 0,
+      "whiteDeleteTime": 60,
       // r18 是否只发送地址不发送图片（如果开启，建议设置 `sendPximgProxies`）
       "r18OnlyUrl": {
         "private": false, // 私聊
@@ -182,16 +186,16 @@
       // 忽略符合该正则表达式的发言，可以避免响应其他机器人的指令，留空则不忽略（优先级低于语言库）
       "ignore": "",
       // 开启搜图模式
-      "searchModeOn": "^竹竹搜[图圖]$",
+      "searchModeOn": "^小爱搜[图圖]$",
       // 关闭搜图模式
-      "searchModeOff": "^[谢謝]+竹竹$",
+      "searchModeOff": "^[谢謝]+小爱$",
       // setu，如果要支持 r18 和关键词参数需要使用捕获组，请查看“wiki-附加功能-setu”以了解更多
-      "setu": "^竹竹.*[来來发發给給][张張个個幅点點份]?(?<r18>[Rr]18的?)?(?<keyword>.*?)?的?[色瑟][图圖]|^--setu$"
+      "setu": "^小爱.*[来來发發给給][张張个個幅点點份]?(?<r18>[Rr]18的?)?(?<keyword>.*?)?的?[色瑟涩][图圖]|^--setu$"
     },
     // 回复相关设置（设为空字符串将不会回复）
     "replys": {
       // 机器人被私聊和@却没有命中任何指令时的默认回复
-      "default": "必须要发送图片我才能帮你找噢_(:3」」\n支持批量！",
+      "default": "老师要看到什么图才能找出处辣",
       // 调试模式下他人私聊或@时的回复
       "debug": "维护升级中，暂时不能使用，抱歉啦~",
       // 个人搜索次数到达上限
@@ -203,22 +207,22 @@
       // 搜索反馈（表示成功接收图片）
       "searchFeedback": "开始搜索",
       // 开启搜图模式
-      "searchModeOn": "了解～请发送图片吧！支持批量噢！\n如想退出搜索模式请发送“谢谢竹竹”",
+      "searchModeOn": "了解～请发送图片吧！支持批量噢！\n如想退出搜索模式请发送“谢谢小爱”",
       // 已经开启搜图模式
-      "searchModeAlreadyOn": "您已经在搜图模式下啦！\n如想退出搜索模式请发送“谢谢竹竹”",
+      "searchModeAlreadyOn": "您已经在搜图模式下啦！\n如想退出搜索模式请发送“谢谢小爱”",
       // 关闭搜图模式
       "searchModeOff": "不用谢～",
       // 已经关闭搜图模式
       "searchModeAlreadyOff": "にゃ～",
       // 搜图模式超时
-      "searchModeTimeout": "由于超时，已为您自动退出搜图模式，以后要记得说“谢谢竹竹”来退出搜图模式噢",
+      "searchModeTimeout": "由于超时，已为您自动退出搜图模式，以后要记得说“谢谢小爱”来退出搜图模式噢",
       // setu 冷却中
-      "setuLimit": "乖，要懂得节制噢 →_→",
+      "setuLimit": "老师冲的太快了啊，꒰ঌ(⸝⸝ ↀ ᯅ ↀ⸝⸝)໒꒱死刑！！！",
       // 没有符合条件的 setu
       "setuNotFind": "没有符合条件的色图（",
       // setu 请求错误
-      "setuError": "瑟图服务器爆炸惹_(:3」∠)_",
-      // 其他不满足发送 setu 的条件
+      "setuError": "瑟图服务器爆炸惹꒰ঌ(⸝⸝ ↀ ᯅ ↀ⸝⸝)໒꒱",
+      // 其他不满足发送 setu 的条件！
       "setuReject": "很抱歉，该功能暂不开放_(:3」」",
       // setu API 调用达到上限（已弃用）
       "setuQuotaExceeded": ""
@@ -240,17 +244,12 @@
         "SecretId": "",
         "SecretKey": "",
         "Region": "ap-beijing",
-        "useApi": ["GeneralBasicOCR", "GeneralFastOCR", "GeneralAccurateOCR"]
+        "useApi": [
+          "GeneralBasicOCR",
+          "GeneralFastOCR",
+          "GeneralAccurateOCR"
+        ]
       }
-    },
-    // 明日方舟公开招募计算器设置
-    "akhr": {
-      // 是否启用
-      "enable": false,
-      // 检查更新间隔（小时），0 则关闭
-      "updateInterval": 24,
-      // 使用的 OCR 服务，可选值同上面的 bot.ocr.use
-      "ocr": "qq"
     },
     // 定时提醒功能设置，请查看“wiki-附加功能-定时提醒”以了解更多
     "reminder": {
@@ -302,44 +301,41 @@
     },
     // 语言库（自动回复），请查看“wiki-附加功能-语言库（自动回复）”以了解更多
     "corpus": [],
-    // ChatGPT
-    "chatgpt": {
+    // characterglm
+    "characterglm": {
       // 是否启用
-      "enable": false,
-      // 触发功能的正则表达式，第一个捕获组内的内容会被当做 prompt 提交，会自动去除首尾空白符
-      // 例如默认配置的意思是，以 chatgpt 开头的消息会触发功能，chatgpt 后面的文字被提取为 prompt
-      "regexp": "^chatgpt([\\s\\S]+)",
-      // 使用的模型
-      "model": "gpt-3.5-turbo",
-      // 是否使用新的 Chat completion API，目前只有新的 GPT-3.5 模型可以使用，其余模型请设置为 false
-      "useChatAPI": true,
-      // 回答的最大 token 数，0 表示使用 API 的默认值；使用 Chat completion API 则填 0 就可以，默认会自动计算；使用传统的补全 API 请根据模型的最大 token 数填写一个合理的值
-      // 使用传统的补全 API 时具有容错机制，如果问题过长触发超过模型最大 token 数错误，会自动降低 max_tokens 并重新请求
-      "maxTokens": 0,
-      // 仅 Chat completion API 可用，会被添加在 messages 的最前面，可以用来添加系统信息等给 ChatGPT 增加设定，具体请阅读官方文档
-      // https://platform.openai.com/docs/guides/chat/introduction
-      "prependMessages": [],
-      // 自定义参数，如果除了 model 和 max_tokens 还想添加参数可以写到这里面，请根据使用的 API 查看对应文档
-      // https://platform.openai.com/docs/api-reference/completions/create
-      // https://platform.openai.com/docs/api-reference/chat/create
-      "additionParams": {},
-      // OpenAI APIKey
+      "enable": true,
+      // 触发模型回复的昵称，设置空字符串将由meta.bot_name代替
+      "nickname": "",
+      // 自定义参数，将提交到会话最顶端,格式如下
+      "prependMessages": [
+        //{ "role": "user", "content": "prompt" }
+      ],
+      // CharacterGLM APIKey
       "apiKey": "",
-      // OpenAI 组织 ID，组织计费用，个人留空即可
-      "organization": "",
       // 每名用户每日使用次数限制，0 则无限制
       "userDailyLimit": 0,
       // 群组黑名单
       "blackGroup": [],
       // 群组白名单（设置后将只允许白名单群组使用）
-      "whiteGroup": [],
+      "whiteGroup": [
+        850880881,
+        515647056
+      ],
       // 覆盖配置（详见 wiki）
-      "overrides": []
+      "overrides": [],
+      //人设配置
+      "meta": {
+        "bot_info":"",
+        "bot_name":"",
+        "user_info":"",
+        "user_name":""
+      }
     },
     // 点赞（需要使用的机器人客户端支持点赞功能）
     "like": {
       // 是否启用
-      "enable": false,
+      "enable": true,
       // 触发正则表达式，其中 times 捕获组可以指定点赞次数
       "regexp": "^赞我(?<times>\\d+)次$|^签到$",
       // 默认点赞次数
