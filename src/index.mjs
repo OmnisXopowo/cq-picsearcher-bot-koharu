@@ -6,7 +6,8 @@ import RandomSeed from 'random-seed';
 import ascii2d from './plugin/ascii2d.mjs';
 import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
-import characterglm from './plugin/characterglm/characterglm.mjs';
+import characterglm from './plugin/glm/characterglm.mjs';
+import glm4 from './plugin/glm/glm4.mjs';
 import corpus from './plugin/corpus.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import like from './plugin/like.mjs';
@@ -183,14 +184,23 @@ async function commonHandle(e, context) {
   }
   //🦾🤖赛博斯坦内鬼
   if (context.message.includes('💪🏻😃')) {
-    replyMsg(context, context.message.replace('💪🏻😃','🦾🤖'));
+    replyMsg(context, context.message.replace('💪🏻😃', '🦾🤖'));
     return true;
   }
   // characterglm
   if (global.config.bot.characterglm.enable) {
-    if (await characterglm(context) || global.config.bot.AImode);
+    if (await characterglm(context)) return true;
+  }
+  //glm4
+  if (global.config.bot.glm4.enable) {
+    if (await glm4(context) ) return true;
+  }
+
+  //处理完所有模型回复后判断AImode，结束所有功能
+  if (global.config.bot.AImode) {
     return true;
   }
+  //继续非AI相关功能
 
   // vits
   if (global.config.bot.vits.enable) {
@@ -212,7 +222,7 @@ async function commonHandle(e, context) {
     if (sendSetu(context)) return true;
   }
 
-  // 反哔哩哔哩小程序
+  // 反哔哩哔哩小程序 
   if (await bilibiliHandler(context)) return true;
 
   return false;
@@ -976,5 +986,5 @@ function handleOriginImgConvert(ctx) {
 function originImgConvert(ctx) {
   const cqImgs = CQ.from(ctx.message).filter(cq => cq.type === 'image');
   const imgs = cqImgs.map(cq => CQ.img(cq.get('url')));
-  replyMsg(ctx, imgs.map(str=>CQ.unescape(str)).join(''), false, false);
+  replyMsg(ctx, imgs.map(str => CQ.unescape(str)).join(''), false, false);
 }

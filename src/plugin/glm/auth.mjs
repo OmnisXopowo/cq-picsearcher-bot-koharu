@@ -43,8 +43,8 @@ export function createJWT(apiKey, expireSeconds = 24 * 3600) {
 }
 
 
-export function getglmContent(group, user) {
-  const key = `${group}-${user}`;
+export function getglmContent(group, user,model) {
+  const key = `${group}-${user}-${model}`;
   let contents = choicesCache.get(key);
   if (contents) {
     return contents;
@@ -53,8 +53,8 @@ export function getglmContent(group, user) {
   }
 }
 
-export function insertglmContent(group, user, NewChoices, requestid) {
-  const key = `${group}-${user}`;
+export function insertglmContent(group, user, NewChoices, requestid,model) {
+  const key = `${group}-${user}-${model}`;
   const contents = {
     choices: NewChoices,
     request_id: requestid,
@@ -62,7 +62,7 @@ export function insertglmContent(group, user, NewChoices, requestid) {
   choicesCache.set(key, contents)
 }
 
-export function deleteglmContent(group, user) {
-  const key = `${group}-${user}`;
+export function deleteglmContent(group, user,model) {
+  const key = `${group}-${user}-${model}`;
   choicesCache.del(key)
 }

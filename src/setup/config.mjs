@@ -34,7 +34,9 @@ const arrayToSetPaths = new Set([
   'bot.bilibili.blackGroup',
   'bot.bilibili.whiteGroup',
   'bot.characterglm.blackGroup',
-  'bot.characterglm.whiteGroup',
+  'bot.characterglm.whiteGroup',  
+  'bot.glm4.blackGroup',
+  'bot.glm4.whiteGroup',
   'bot.vits.blackGroup',
   'bot.vits.whiteGroup',
 ]);

@@ -11,7 +11,7 @@ export declare interface Config {
 
 declare interface Bot {
     debug: boolean;
-    AImode:boolean;
+    AImode: boolean;
     admin: number;
     adminTinyId: string;
     whiteGroup: Set<number | string>;
@@ -63,6 +63,7 @@ declare interface Bot {
     bilibili: Bilibili;
     corpus: any[];
     characterglm: CharacterGLM;
+    glm4: glm4;
     like: Like;
     vits: Vit;
 }
@@ -89,19 +90,30 @@ declare interface Like {
 declare interface CharacterGLM {
     enable: boolean;
     nickname: string;
-    prependMessages: [{role: string, content: string}];
+    prependMessages: [{ role: string, content: string }];
     apiKey: string;
     userDailyLimit: number;
     blackGroup: Set<number | string>;
     whiteGroup: Set<number | string>;
     overrides: any[];
     meta: {
-          bot_info:string,
-          bot_name:string,
-          user_info:string,
-          user_name:string;
-        }
-      
+        bot_info: string,
+        bot_name: string,
+        user_info: string,
+        user_name: string;
+    }
+}
+
+declare interface glm4 {
+    enable: boolean;
+    nickname: string;
+    prependMessages: [{ role: string, content: string }];
+    apiKey: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
+    systemRole: string
 }
 
 declare type AdditionParam = Push;
