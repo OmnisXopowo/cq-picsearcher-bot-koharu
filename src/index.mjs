@@ -687,7 +687,7 @@ function doOCR(context) {
  * @param {string} msg
  * @returns {Array<{ file: string; url: string; }>} 图片URL数组
  */
-function getImgs(msg) {
+export function getImgs(msg) {
   if (Array.isArray(msg)) {
     const cqImgs = msg.filter(item => item.type === 'image');
     return cqImgs.map(item => {
@@ -712,9 +712,8 @@ function getImgs(msg) {
  * @param {string} msg 消息
  * @returns 有则返回true
  */
-function hasImage(msg) {
+export function hasImage(msg) {
   return msg.indexOf('[CQ:image') !== -1;
-
 }
 
 /**
