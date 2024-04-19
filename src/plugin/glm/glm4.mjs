@@ -58,16 +58,19 @@ const getMatchAndConfig =  async context => {
     }
   }
   
-  
-  
+
   if (originalContext && hasImage(originalContext.message)) {
     imgUrls = getImgs(originalContext.message);
   }else if(hasImage(context.message)){
     imgUrls = getImgs(context.message);
   }
 
-  if(imgUrls){
-    match=context.message.replace(globalConfig.nickname,'');
+  //如果从原消息或引用的原消息里获取到图片url，但未被nickname唤醒时，检测是否是@BOT消息，否则放弃消息
+  if(imgUrls && !match && context.message.includes('CQ:at') && ( context.self_id== _.get(/\[CQ:at,qq=(-?\d+).*\]/.exec(context.message), 1)) ){
+    match = context.message?.replace(/\[CQ:[^\]]+\]/g, '').trim();
+    if (!match){
+    match='仔细说你看到了什么';
+    }
   }
 
   return {
