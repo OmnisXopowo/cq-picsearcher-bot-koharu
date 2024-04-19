@@ -174,12 +174,8 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
 
   return retryAsync(async () => {
     const { debug } = global.config.bot;
-    if (prompt == "--r") {
-      deleteglmContent(context.group_id, singleton ? '0' : context.user_id, modelName);
-      return '已清空上下文'
-    }
 
-    let content = getglmContent(context.group_id, singleton ? '0' : context.user_id, modelName);
+    let content = { choices: [] };
 
     content.choices.push({ role: 'user',  content: [
       {
@@ -238,12 +234,6 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
         };
       })
       content.choices.push(...choiceResponses);
-
-      insertglmContent(context.group_id,
-        singleton ? '0' : context.user_id,
-        content.choices,
-        data.request_id,
-        modelName);
 
       return returnMessage;
     }
