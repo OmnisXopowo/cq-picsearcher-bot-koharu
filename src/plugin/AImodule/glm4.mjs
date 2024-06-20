@@ -31,8 +31,14 @@ const getMatchAndConfig =  async context => {
   let imgUrls;
   let originalContext;
   if (context.message.includes(globalConfig.nickname)) {
-    match = context.message;
-  } 
+    if(context.message.startsWith(globalConfig.nickname)){
+      match= context.message.replace(globalConfig.nickname,'');
+    }else{
+      match = context.message;
+    }
+  }
+
+
   if (context.message_type === 'group') {
     try {
       //判断是否是回复的消息
@@ -107,7 +113,7 @@ const callGML4API = (prompt, config, context) => {
     content.choices.push({ role: 'user', content: prompt });
 
     const param = {
-      model: 'glm-4',
+      model: 'glm-4-0520',
       messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
@@ -118,7 +124,7 @@ const callGML4API = (prompt, config, context) => {
     if (content.request_id) {
       param.request_id = content.request_id;
     } else {
-      param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你是阿洛娜，是“什亭之匣”的系统管理者和操作系统，以少女的形象示人。你搭载了基沃托斯最先进的人工智能，具备庞大的知识库、接近人类的情感系统以及自主行动能力' });
+      param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你是普拉娜，是“什亭之匣”的系统管理者和操作系统，以少女的形象示人。你搭载了基沃托斯最先进的人工智能，具备庞大的知识库、接近人类的情感系统以及自主行动能力' });
     }
 
     const jwttoken = createJWT(config.apiKey);
@@ -219,14 +225,16 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
 
     if (data.error) {
       const errorMsg = data.error.message;
-      console.error(`${modelName} error:`, errorMsg);
+      console.error(`${modelName} error1:`, errorMsg);
+      console.error(`${modelName} error1:`, content);
       return `ERROR1: ${errorMsg}`;
     }
     let returnMessage = '';
 
     if (data.choices) {
       const choiceResponses = data.choices.map(obj => {
-        let FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+//        let FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+        let FormatResult = obj.message.content.trim();
         returnMessage += FormatResult;
         return {
           ...obj.message,

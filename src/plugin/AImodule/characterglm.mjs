@@ -8,6 +8,8 @@ import { getglmContent, insertglmContent, deleteglmContent, createJWT } from './
 
 const dailyCount = new DailyCount();
 let overrideGroups = [];
+const Modelcharacterglm = {model:'charglm-3',api:'https://open.bigmodel.cn/api/paas/v4/chat/completions'};
+const Modelemohaa = {model:'emohaa',api:'https://open.bigmodel.cn/api/paas/v4/chat/completions'};
 
 emitter.onConfigLoad(() => {
   overrideGroups = global.config.bot.characterglm.overrides.map(({ blackGroup, whiteGroup }) => {
@@ -20,18 +22,35 @@ emitter.onConfigLoad(() => {
 
 const getMatchAndConfig = text => {
   const globalConfig = global.config.bot.characterglm;
+  let choosedModel = Modelcharacterglm;
   let match;
   if (text.startsWith(globalConfig.nickname)) {
     match = text.replace(globalConfig.nickname, "");
   }
   else if (text.includes(globalConfig.nickname)) {
     match = text.replace(globalConfig.nickname, globalConfig.meta.bot_name);
-  } else if (text.includes(globalConfig.meta.bot_name)) {
+  }
+  else if (text.includes(globalConfig.meta.bot_name)) {
     match = text;
+  }
+
+  if (text.startsWith('noa')) {
+    match = text.replace('noa', "");
+    choosedModel=Modelemohaa;
+  }
+  else if (text.includes('noa')) {
+    match = text.replace('noa', globalConfig.meta.bot_name);
+    choosedModel=Modelemohaa;
+  }
+  else if (text.includes(globalConfig.meta.bot_name)) {
+    match = text;    
+    choosedModel=Modelemohaa;
+
   }
 
   return {
     match,
+    choosedModel,
     config: pick(
       globalConfig,
       [
@@ -43,29 +62,32 @@ const getMatchAndConfig = text => {
         'whiteGroup',
         'meta',
       ]
-    ),
+    )
   };
 };
 
 
-const callCharacterAPI = (prompt, config, context) => {
+const callCharacterAPI = (prompt, config, context,choosedModel) => {
   //群单例，群聊模式
   const singleton = true;
-  const modelName = 'characterglm';
+
+
+
   return retryAsync(async () => {
     const { debug } = global.config.bot;
     if (prompt == "--r") {
-      deleteglmContent(context.group_id, singleton ? '0' : context.user_id, modelName);
+      deleteglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model);
       return '已清空上下文'
     }
 
-    let content = getglmContent(context.group_id, singleton ? '0' : context.user_id, modelName)
+    let content = getglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model)
 
     content.choices.push({ role: 'user', content: prompt });
 
     const param = {
       meta: config.meta,
-      prompt: [
+      model:choosedModel.model,
+      messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
       ],
@@ -84,49 +106,48 @@ const callCharacterAPI = (prompt, config, context) => {
     };
 
 
-    if (debug) console.log(`${modelName} params:`, inspect(param, { depth: null }));
+    if (debug) console.log(`${choosedModel.model} params:`, inspect(param, { depth: null }));
 
-    const { data } = await AxiosProxy.post('https://open.bigmodel.cn/api/paas/v3/model-api/charglm-3/invoke', param, {
+    const { data } = await AxiosProxy.post(choosedModel.api, param, {
       headers,
       validateStatus: status => 200 <= status && status < 500,
     });
-    if (debug) console.log(`${modelName} response:`, inspect(data, { depth: null }));
+    if (debug) console.log(`${choosedModel.model} response:`, inspect(data, { depth: null }));
 
     if (data.error) {
       const errorMsg = data.error.message;
-      console.error(`${modelName} error:`, errorMsg);
+      console.error(`${choosedModel.model} error:`, errorMsg);
       return `ERROR1: ${errorMsg}`;
     }
     let returnMessage = '';
 
-    if (data.data.choices) {
-      const choiceResponses = data.data.choices.map(obj => {
-        let FormatResult = obj.content.replace(/(\"*)(\\n*)/g, '').trim();
-        returnMessage += FormatResult;
-        return {
-          ...obj,
-          content: FormatResult
-        };
-      })
-      content.choices.push(...choiceResponses);
+    if (data.choices) {
+
+      const choiceResponses = data.choices[0]
+      if(choiceResponses.finish_reason.startsWith('stop')){
+
+      returnMessage = choiceResponses.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+
+      content.choices.push(choiceResponses.message);
 
       insertglmContent(context.group_id,
         singleton ? '0' : context.user_id,
         content.choices,
-        data.data.request_id,
-        modelName);
+        data.request_id,
+        choosedModel.model);
 
       return returnMessage;
+      }
     }
 
-    console.log(`${modelName} unexpected response:`, data);
+    console.log(`${choosedModel.model} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
     .catch(e => `ERROR2: ${e.message}`);
 };
 
 export default async context => {
-  const { match, config } = getMatchAndConfig(context.message);
+  const { match, choosedModel,config } = getMatchAndConfig(context.message);
   if (!match) return false;
 
   if (context.group_id) {
@@ -153,7 +174,7 @@ export default async context => {
 
   if (global.config.bot.debug) console.log('[characterglm] prompt:', prompt);
 
-  const completion = await callCharacterAPI(prompt, config, context);
+  const completion = await callCharacterAPI(prompt, config, context,choosedModel);
 
   global.replyMsg(context, completion, false, true);
 
