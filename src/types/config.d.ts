@@ -24,6 +24,7 @@ declare interface Bot {
     antiShielding: number;
     handleBannedHosts: boolean;
     handleBannedHostsWithLegacyMethod: boolean;
+    stopSearchingHWRatioGt: number;
     hideImg: boolean;
     hideImgWhenSaucenaoNSFW: number;
     hideImgWhenLowAcc: boolean;
@@ -129,6 +130,7 @@ declare interface Bilibili {
     imgPreDlTimeout: number;
     push: Push;
     pushCheckInterval: number;
+    pushIgnoreForwardingSelf: boolean;
     useFeed: boolean;
     feedCheckInterval: number;
     cookie: string;
@@ -151,10 +153,12 @@ declare interface Akhr {
     enable: boolean;
     updateInterval: number;
     ocr: string;
+    ocrFallback: any[];
 }
 
 declare interface Ocr {
     use: string;
+    fallback: any[];
     "ocr.space": OcrSpace;
     baidubce: Baidubce;
     tencent: Tencent;
@@ -195,6 +199,7 @@ declare interface Reply {
     setuError: string;
     setuReject: string;
     setuQuotaExceeded: string;
+    stopSearchingByHWRatio: string;
 }
 
 declare interface Reg {
