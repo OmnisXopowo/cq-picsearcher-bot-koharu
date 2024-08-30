@@ -65,6 +65,7 @@ declare interface Bot {
     corpus: any[];
     characterglm: CharacterGLM;
     glm4: glm4;
+    tongyixingchen:tongyixingchen;
     like: Like;
     vits: Vit;
 }
@@ -116,6 +117,19 @@ declare interface glm4 {
     overrides: any[];
     systemRole: string
 }
+
+declare interface tongyixingchen {
+    enable: boolean;
+    nickname: string;
+    prependMessages: [{ role: string, content: string }];
+    apiKey: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
+    characterId: string
+}
+
 
 declare type AdditionParam = Push;
 

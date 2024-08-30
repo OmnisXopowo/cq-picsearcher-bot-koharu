@@ -53,6 +53,7 @@ export function getglmContent(group, user,model) {
   }
 }
 
+
 export function insertglmContent(group, user, NewChoices, requestid,model) {
   const key = `${group}-${user}-${model}`;
   const contents = {
@@ -63,6 +64,32 @@ export function insertglmContent(group, user, NewChoices, requestid,model) {
 }
 
 export function deleteglmContent(group, user,model) {
+  const key = `${group}-${user}-${model}`;
+  choicesCache.del(key)
+}
+
+
+export function getxingchenContent(group, user,model) {
+  const key = `${group}-${user}-${model}`;
+  let contents = choicesCache.get(key);
+  if (contents) {
+    return contents;
+  } else {
+    return { choices: [] };
+  }
+}
+
+
+export function insertxingchenContent(group, user, NewChoices, requestid,model) {
+  const key = `${group}-${user}-${model}`;
+  const contents = {
+    choices: NewChoices,
+    request_id: requestid,
+  }
+  choicesCache.set(key, contents)
+}
+
+export function deletexingchenContent(group, user,model) {
   const key = `${group}-${user}-${model}`;
   choicesCache.del(key)
 }

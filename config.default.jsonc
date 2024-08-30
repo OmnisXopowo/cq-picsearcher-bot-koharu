@@ -345,24 +345,41 @@
       // 是否启用
       "enable": true,
       // 触发模型回复的昵称
-      "nickname": "阿洛娜",
+      "nickname": "",
       // 自定义参数，将提交到会话最顶端,格式如下
       "prependMessages": [],
       // CharacterGLM APIKey
-      "apiKey": "75625aaf77abfdd2b74d5b284e4de142.1SpPb6BuBOkq2Lo0",
+      "apiKey": "",
       // 每名用户每日使用次数限制，0 则无限制
       "userDailyLimit": 0,
       // 群组黑名单
       "blackGroup": [],
       // 群组白名单（设置后将只允许白名单群组使用）
-      "whiteGroup": [
-        850880881,
-        515647056
-      ],
+      "whiteGroup": [],
       // 覆盖配置（详见 wiki）
       "overrides": [],
       //系统role
       "systemRole": ""
+    },
+    "tongyixingchen": {
+      // 是否启用
+      "enable": true,
+      // 触发模型回复的昵称
+      "nickname": "",
+      // 自定义参数，将提交到会话最顶端,格式如下
+      "prependMessages": [],
+      // CharacterGLM APIKey
+      "apiKey": "",
+      // 每名用户每日使用次数限制，0 则无限制
+      "userDailyLimit": 0,
+      // 群组黑名单
+      "blackGroup": [],
+      // 群组白名单（设置后将只允许白名单群组使用）
+      "whiteGroup": [],
+      // 覆盖配置（详见 wiki）
+      "overrides": [],
+      //角色id
+      "characterId": ""
     },
     // 点赞（需要使用的机器人客户端支持点赞功能）
     "like": {

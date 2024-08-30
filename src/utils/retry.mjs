@@ -5,7 +5,7 @@ import Axios from 'axios';
  * @param {number} [times]
  * @param {Function} [onError]
  */
-export const retryAsync = async (func, times = 3, onError) => {
+export const retryAsync = async (func, times = 1, onError) => {
   while (times--) {
     try {
       return await func();
@@ -49,7 +49,7 @@ export const retryPost = (...args) =>
     if (!timeout) return Axios.post(...args);
     return new Promise((resolve, reject) => {
       // 再整个 timeout 以防万一，axios 的 timeout 可能会失灵……
-      const timeoutId = setTimeout(() => reject(new Error(`timeout of ${timeout}ms exceeded`)), timeout + 1000);
+      const timeoutId = setTimeout(() => reject(new Error(`timeout of ${timeout}ms exceeded`)), timeout + 2000);
       Axios.post(...args)
         .then((...rets) => {
           clearTimeout(timeoutId);

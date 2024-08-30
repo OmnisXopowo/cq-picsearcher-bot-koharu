@@ -8,6 +8,7 @@ import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
 import characterglm from './plugin/AImodule/characterglm.mjs';
 import glm4 from './plugin/AImodule/glm4.mjs';
+import tongyixingchen from './plugin/AImodule/tongyixingchen.mjs';
 import corpus from './plugin/corpus.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import like from './plugin/like.mjs';
@@ -189,10 +190,10 @@ async function commonHandle(e, context) {
     return true;
   }
   //发癫
-  if(context.message.startsWith('[CQ:at,qq=3766461635] 发癫 ')){
+  if (context.message.startsWith('[CQ:at,qq=3766461635] 发癫 ')) {
     const sentence = psycho[Math.floor(Math.random() * psycho.length)];
     const name = context.message.replace('[CQ:at,qq=3766461635] 发癫 ', '');
-    replyMsg(context, sentence.replaceAll('<name>', name? name :'爱丽丝'));
+    replyMsg(context, sentence.replaceAll('<name>', name ? name : '爱丽丝'));
     return true;
   }
   // characterglm
@@ -201,7 +202,12 @@ async function commonHandle(e, context) {
   }
   //glm4
   if (global.config.bot.glm4.enable) {
-    if (await glm4(context) ) return true;
+    if (await glm4(context)) return true;
+  }
+
+  //tongyixingchen
+  if (global.config.bot.tongyixingchen.enable) {
+    if (await tongyixingchen(context)) return true;
   }
 
   //处理完所有模型回复后判断AImode，结束所有功能

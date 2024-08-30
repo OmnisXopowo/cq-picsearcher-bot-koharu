@@ -75,6 +75,9 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
 
   return retryAsync(async () => {
     const { debug } = global.config.bot;
+
+    const MaxSize = 20;
+
     if (prompt == "--r") {
       deleteglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model);
       return '已清空上下文'
@@ -83,6 +86,8 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
     let content = getglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model)
 
     content.choices.push({ role: 'user', content: prompt });
+
+
 
     const param = {
       meta: config.meta,
@@ -129,6 +134,10 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
       returnMessage = choiceResponses.message.content.replace(/(\"*)(\\n*)/g, '').trim();
 
       content.choices.push(choiceResponses.message);
+
+            if(content.choices.length <=MaxSize ){
+      content.choices.shift()
+    }
 
       insertglmContent(context.group_id,
         singleton ? '0' : context.user_id,

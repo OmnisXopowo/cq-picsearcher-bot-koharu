@@ -36,7 +36,9 @@ const arrayToSetPaths = new Set([
   'bot.characterglm.blackGroup',
   'bot.characterglm.whiteGroup',  
   'bot.glm4.blackGroup',
-  'bot.glm4.whiteGroup',
+  'bot.glm4.whiteGroup',  
+  'bot.tongyixingchen.blackGroup',
+  'bot.tongyixingchen.whiteGroup',
   'bot.vits.blackGroup',
   'bot.vits.whiteGroup',
 ]);

@@ -113,7 +113,7 @@ const callGML4API = (prompt, config, context) => {
     content.choices.push({ role: 'user', content: prompt });
 
     const param = {
-      model: 'glm-4-0520',
+      model: 'glm-4-plus',
       messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
@@ -124,7 +124,7 @@ const callGML4API = (prompt, config, context) => {
     if (content.request_id) {
       param.request_id = content.request_id;
     } else {
-      param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你是普拉娜，是“什亭之匣”的系统管理者和操作系统，以少女的形象示人。你搭载了基沃托斯最先进的人工智能，具备庞大的知识库、接近人类的情感系统以及自主行动能力' });
+      param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你是“什亭之匣”的系统管理者和操作系统，你的名字叫普拉娜,以少女的形象示人。你搭载了基沃托斯最先进的人工智能，具备庞大的知识库、接近人类的情感系统以及自主行动能力' });
     }
 
     const jwttoken = createJWT(config.apiKey);
