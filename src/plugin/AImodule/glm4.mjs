@@ -172,8 +172,10 @@ const callGML4API = (prompt, config, context) => {
     console.log(`${modelName} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
-    .catch(e => `ERROR2: ${e.message}`);
-};
+  .catch(e => {
+    `ERROR2: ${e.message}`;
+    console.log(`${modelName} ERROR2:`, e);
+  });};
 
 const callGML4VAPI = (prompt, config, context, imgUrls) => {
   const modelName = 'glm4v';
@@ -249,8 +251,10 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
     console.log(`${modelName} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
-    .catch(e => `ERROR2: ${e.message}`);
-};
+  .catch(e => {
+    `ERROR2: ${e.message}`;
+    console.log(`${modelName} ERROR2:`, e);
+  });};
 
 
 export default async context => {

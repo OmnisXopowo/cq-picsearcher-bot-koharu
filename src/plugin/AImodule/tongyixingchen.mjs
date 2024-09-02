@@ -23,7 +23,7 @@ const getMatchAndConfig = text => {
   const globalConfig = global.config.bot.tongyixingchen;
   let match;
 
-  if (text.includes(globalConfig.nickname)) {
+  if (text.includes(globalConfig.nickname)) { 
     if (text.startsWith(globalConfig.nickname)) {
       match = text.replace(globalConfig.nickname, '');
     } else {
@@ -69,7 +69,7 @@ const callXingchenAPI = (prompt, config, context) => {
 
     let content = getxingchenContent(context.group_id, singleton ? '0' : context.user_id, modelName)
 
-    content.choices.push({name:'老师', role: 'user', content: prompt });
+    content.choices.push({ name: '老师', role: 'user', content: prompt });
 
     const param = {
       input: {
@@ -77,19 +77,19 @@ const callXingchenAPI = (prompt, config, context) => {
           ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
           ...content.choices,
         ],
-        aca:{
+        aca: {
           botProfile: {
-              characterId: config.characterId
+            characterId: config.characterId
           },
           userProfile: {
-              userId: context.group_id,
-              userName: "老师",
-              basicInfo: ""
+            userId: context.group_id,
+            userName: "老师",
+            basicInfo: ""
           },
           context: {
-              useChatHistory: false
+            useChatHistory: false
           }
-      }
+        }
       }
     };
 
@@ -103,7 +103,7 @@ const callXingchenAPI = (prompt, config, context) => {
       "X-AcA-DataInspection": "enable",
       "x-fag-servicename": "aca-chat-send",
       "x-fag-appcode": "aca",
-      "X-AcA-SSE":"disable",
+      "X-AcA-SSE": "disable",
       "Authorization": `Bearer ${config.apiKey}`
     };
 
@@ -129,8 +129,8 @@ const callXingchenAPI = (prompt, config, context) => {
       if (choiceResponses.stopReason.startsWith('stop')) {
 
         returnMessage = choiceResponses.messages[0].content;
-        
-        content.choices.push(pick(choiceResponses.messages[0],'name','content','role'));
+
+        content.choices.push(pick(choiceResponses.messages[0], 'name', 'content', 'role'));
 
         // if (content.choices.length <= MaxSize) {
         //   content.choices.shift()
@@ -149,7 +149,10 @@ const callXingchenAPI = (prompt, config, context) => {
     console.log(`${modelName} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
-    .catch(e => `ERROR2: ${e.message}`);
+    .catch(e => {
+      `ERROR2: ${e.message}`;
+      console.log(`${modelName} ERROR2:`, e);
+    });
 };
 
 export default async context => {

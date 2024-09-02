@@ -152,8 +152,10 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
     console.log(`${choosedModel.model} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
-    .catch(e => `ERROR2: ${e.message}`);
-};
+  .catch(e => {
+    `ERROR2: ${e.message}`;
+    console.log(`${modelName} ERROR2:`, e);
+  });};
 
 export default async context => {
   const { match, choosedModel,config } = getMatchAndConfig(context.message);
