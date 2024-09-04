@@ -33,6 +33,7 @@ import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 
+
 const { version } = Fs.readJsonSync(resolveByDirname(import.meta.url, '../package.json'));
 
 const bot = new CQWebSocket({
@@ -514,6 +515,26 @@ async function groupMsg(e, context) {
       setTimeout(() => {
         replyMsg(context, context.message);
       }, 2000);
+    }
+  }
+
+  if (global.config.bot.shike.enable && global.config.bot.shike.keywords.length > 0) {
+
+    if (getRand() <= global.config.bot.shike.probability && !context.message.includes('[CQ:')) {
+      let MsgReply = '';
+
+      global.config.bot.shike.keywords.forEach(key => {
+        if (context.message.includes(key)) {
+          MsgReply += `${key}？？`
+        }
+      });
+
+      if (MsgReply.length > 1) {
+
+        setTimeout(() => {
+          replyMsg(context, `${MsgReply} 死刑！！`, false, true);
+        }, 2000);
+      }
     }
   }
 }

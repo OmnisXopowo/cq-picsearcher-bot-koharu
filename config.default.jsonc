@@ -123,6 +123,17 @@
       // 平时直接复读的概率（百分比 0~100）
       "commonProb": 0.2
     },
+    //涩涩死刑相关功能
+    "shike": {
+      //是否启用
+      "enable": true,
+      //判刑关键词
+      "keywords": ["69","真空","涩涩"],
+      //判刑消息,其中<key>为触发关键词占位
+      "replies": ["<key>？？ 死刑！！","<key>？？ 不可以涩涩！"],
+      //判刑概率（百分比 0~100）
+      "probability": 20
+    },
     // setu 相关功能，部分配置的详细说明请查看“wiki-附加功能-setu”以了解更多
     "setu": {
       // 是否启用
@@ -335,10 +346,10 @@
       "overrides": [],
       //人设配置
       "meta": {
-        "bot_info":"",
-        "bot_name":"",
-        "user_info":"",
-        "user_name":""
+        "bot_info": "",
+        "bot_name": "",
+        "user_info": "",
+        "user_name": ""
       }
     },
     "glm4": {

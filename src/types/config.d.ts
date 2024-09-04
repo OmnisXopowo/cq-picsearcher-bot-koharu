@@ -55,6 +55,7 @@ declare interface Bot {
     disableMessageEscape: boolean;
     cache: Cache;
     repeat: Repeat;
+    shike:Shike;
     setu: Setu;
     regs: Reg;
     replys: Reply;
@@ -263,6 +264,12 @@ declare interface Repeat {
     times: number;
     probability: number;
     commonProb: number;
+}
+
+declare interface Shike {
+    enable: boolean;
+    keywords: Set<string>;
+    probability: number;
 }
 
 declare interface Cache {
