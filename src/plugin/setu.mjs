@@ -11,6 +11,7 @@ import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
 
 const API_URLs = [lolicon, lolisuki, yuban10703];
+//const API_URLs = [lolicon];
 const PIXIV_404 = Symbol('Pixiv image 404');
 
 async function lolicon(r18, keyword) {
@@ -134,8 +135,12 @@ function sendSetu(context, reply = true) {
   async function getapi(){
     try {
       for (let api of API_URLs) {
-        await api(r18, keyword).then(result => ret = result.data);
-        if ((!ret.error) && (ret.data.length)) {
+        await api(r18, keyword).then(result => ret = result.data)
+        .catch(e => {
+          console.error('[error] setu API出错');
+          logError(e);
+        });
+        if ( ret && (!ret.error) && (ret.data.length)) {
           console.log(`setuAPI：[${api.name}]`);
           break;
         }

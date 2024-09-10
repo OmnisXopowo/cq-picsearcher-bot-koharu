@@ -18,7 +18,7 @@
     // 调试模式，启用时只会响应来自 admin 的发言，方便独自测试，并且会为所有搜图行为默认添加 --debug 参数
     "debug": false,
     // AI模式，启动后只会响应AI对话
-    "AImode": true,
+    "AImode": false,
     // 管理者QQ，请务必设置
     "admin": 0,
     // 管理者频道 tinyId
@@ -51,7 +51,7 @@
     "hideImg": false,
     // saucenao 得到 NSFW 结果时隐藏缩略图，可选 0~3，严格程度依次增加
     // 0-不隐藏，1-隐藏明确为 NSFW 的缩略图，2-隐藏明确和可能为 NSFW 的缩略图，3-只显示明确为非 NSFW 的缩略图
-    "hideImgWhenSaucenaoNSFW": 0,
+    "hideImgWhenSaucenaoNSFW": 1,
     // saucenao 得到低相似度结果时隐藏结果缩略图（包括 ascii2d 和 nhentai）
     "hideImgWhenLowAcc": false,
     // whatanime 得到 R18 结果时隐藏结果缩略图
@@ -374,7 +374,7 @@
     },
     "tongyixingchen": {
       // 是否启用
-      "enable": true,
+      "enable": false,
       // 触发模型回复的昵称
       "nickname": "",
       // 自定义参数，将提交到会话最顶端,格式如下
