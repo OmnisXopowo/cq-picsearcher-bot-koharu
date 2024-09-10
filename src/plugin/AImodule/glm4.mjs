@@ -185,7 +185,7 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
 
     let content = { choices: [] };
 
-    content.choices.push({ role: 'user',  content: [
+    content.choices.push({ role: "user",  content: [
       {
         type: "text",
         text: prompt
@@ -204,7 +204,6 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
         ...content.choices,
       ],
     };
-
 
     if (content.request_id) {
       param.request_id = content.request_id;

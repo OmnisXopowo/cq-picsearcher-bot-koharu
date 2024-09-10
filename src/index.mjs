@@ -15,6 +15,7 @@ import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
 import saucenao, { snDB } from './plugin/saucenao.mjs';
+import IqDB from './plugin/iqdb.mjs';
 import sendSetu from './plugin/setu.mjs';
 import vits from './plugin/vits.mjs';
 import whatanime from './plugin/whatanime.mjs';
@@ -646,7 +647,10 @@ async function searchImg(context, customDB = -1) {
     let hasSucc = false;
     let snLowAcc = false;
     let useAscii2d = args.a2d;
+    let useIqdb = args.iqdb;
     let useWhatAnime = db === snDB.anime;
+
+
 
     // saucenao
     if (!useAscii2d) {
@@ -660,12 +664,34 @@ async function searchImg(context, customDB = -1) {
           (global.config.bot.useAscii2dWhenQuotaExcess && snRes.excess) ||
           (global.config.bot.useAscii2dWhenFailed && !success))
       ) {
+        useIqdb = true;
         useAscii2d = true;
       }
       if (!snRes.lowAcc && snRes.msg.indexOf('anidb.net') !== -1) useWhatAnime = true;
       if (snRes.msg.length > 0) needCacheMsgs.push(snRes.msg);
       await replier.reply(snRes.msg, snRes.warnMsg);
     }
+
+    //iqdb
+    if (useIqdb) {
+      const { ReturnMsg, success: iqdbSuc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
+      if (asErr) {
+        success = false;
+        const errMsg =
+          (asErr.response && asErr.response.data.length < 100 && `\n${asErr.response.data}`) ||
+          (asErr.message && `\n${asErr.message}`) ||
+          '';
+        await replier.reply(`iqdb 搜索失败${errMsg}`);
+        console.error('[error] iqdb');
+        logError(asErr);
+      } else {
+        if (iqdbSuc) {
+          await replier.reply(ReturnMsg);
+          needCacheMsgs.push(ReturnMsg);
+        }
+      }
+    }
+
 
     // ascii2d
     if (useAscii2d) {

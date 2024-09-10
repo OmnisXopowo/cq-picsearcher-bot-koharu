@@ -145,7 +145,7 @@ async function doSearch(imgURL, db, debug = false) {
             lowAcc = true;
             warnMsg += `相似度 ${simText}% 过低，如果这不是你要找的图，那么可能：确实找不到此图/图为原图的局部图/图清晰度太低/搜索引擎尚未同步新图\n`;
             if (global.config.bot.useAscii2dWhenLowAcc && (db === snDB.all || db === snDB.pixiv))
-              warnMsg += '自动使用 ascii2d 进行搜索\n';
+              warnMsg += '自动使用 IqDb 进行搜索\n';
           }
 
           const hideThumbnail =

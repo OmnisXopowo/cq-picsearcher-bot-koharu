@@ -239,9 +239,14 @@ function getSetuUrlByTemplate(tpl, setu, url) {
   return _.template(tpl, { interpolate: /{{([\s\S]+?)}}/g })({ path, ..._.pick(setu, ['pid', 'p', 'uid', 'ext']) });
 }
 
+
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     let j = Math.floor(Math.random() * (i + 1)); // 从 0 到 i 的随机索引
     [array[i], array[j]] = [array[j], array[i]];
   }
 }
+
+
+
+
