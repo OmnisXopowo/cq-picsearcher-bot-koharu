@@ -192,9 +192,9 @@ async function commonHandle(e, context) {
     return true;
   }
   //发癫
-  if (context.message.startsWith('[CQ:at,qq=3766461635] 发癫 ')) {
+  if (context.message.startsWith('/发癫 ')) {
     const sentence = psycho[Math.floor(Math.random() * psycho.length)];
-    const name = context.message.replace('[CQ:at,qq=3766461635] 发癫 ', '');
+    const name = context.message.replace('/发癫 ', '');
     replyMsg(context, sentence.replaceAll('<name>', name ? name : '爱丽丝'));
     return true;
   }
