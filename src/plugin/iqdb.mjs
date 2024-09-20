@@ -86,7 +86,7 @@ function parse(body) {
 }
 
 async function getText(IqDBResult, snLowAcc = false) {
-  const IqdbReturnMsg = ["Iqdb最相似结果："];
+  const IqdbReturnMsg = [`Iqdb最高${IqDBResult.similarity}%相似：`];
   
   if (IqDBResult.image && !(global.config.bot.hideImg || ( IqDBResult.level !='safe' && (snLowAcc && global.config.bot.hideImgWhenLowAcc)))) {
     const mode = global.config.bot.antiShielding;
