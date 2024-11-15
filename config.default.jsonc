@@ -126,13 +126,13 @@
     //涩涩死刑相关功能
     "shike": {
       //是否启用
-      "enable": true,
+      "enable": false,
       //判刑关键词
-      "keywords": ["69","真空","涩涩"],
+      "keywords": ["69","真空","涩涩","色情","色色"],
       //判刑消息,其中<key>为触发关键词占位
       "replies": ["<key>？？ 死刑！！","<key>？？ 不可以涩涩！"],
       //判刑概率（百分比 0~100）
-      "probability": 20
+      "probability": 10
     },
     // setu 相关功能，部分配置的详细说明请查看“wiki-附加功能-setu”以了解更多
     "setu": {
@@ -391,6 +391,26 @@
       "overrides": [],
       //角色id
       "characterId": ""
+    },
+    "tarotReader":{
+      // 是否启用
+      "enable": false,
+      // 触发占卜的关键词,如匹配消息是否以 "/占卜" 开头，并将可能要占卜的问题命名为content的捕获组
+      "regex": "/^\/占卜(?<content>.*)/",
+      // 自定义参数，将提交到会话最顶端,格式如下
+      "prependMessages": [],
+      // CharacterGLM APIKey
+      "apiKey": "",
+      // 每名用户每日使用次数限制，0 则无限制
+      "userDailyLimit": 1,
+      // 群组黑名单
+      "blackGroup": [],
+      // 群组白名单（设置后将只允许白名单群组使用）
+      "whiteGroup": [],
+      // 覆盖配置（详见 wiki）
+      "overrides": [],
+      //系统role
+      "systemRole": ""
     },
     // 点赞（需要使用的机器人客户端支持点赞功能）
     "like": {

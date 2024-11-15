@@ -65,6 +65,7 @@ declare interface Bot {
     bilibili: Bilibili;
     corpus: any[];
     characterglm: CharacterGLM;
+    tarotReader: tarotReader;
     glm4: glm4;
     tongyixingchen:tongyixingchen;
     like: Like;
@@ -105,6 +106,17 @@ declare interface CharacterGLM {
         user_info: string,
         user_name: string;
     }
+}
+
+declare interface tarotReader {
+    enable: boolean;
+    regex:String;
+    prependMessages: [{ role: string, content: string }];
+    apiKey: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
 }
 
 declare interface glm4 {

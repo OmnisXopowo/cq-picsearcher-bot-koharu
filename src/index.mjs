@@ -8,6 +8,7 @@ import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
 import characterglm from './plugin/AImodule/characterglm.mjs';
 import glm4 from './plugin/AImodule/glm4.mjs';
+import tarotReader from './plugin/AImodule/tarotReader.mjs';
 import tongyixingchen from './plugin/AImodule/tongyixingchen.mjs';
 import corpus from './plugin/corpus.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
@@ -33,6 +34,8 @@ import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
+import  dailyCountInstance   from './utils/dailyCount.mjs';
+
 
 
 const { version } = Fs.readJsonSync(resolveByDirname(import.meta.url, '../package.json'));
@@ -212,6 +215,11 @@ async function commonHandle(e, context) {
     if (await tongyixingchen(context)) return true;
   }
 
+    //塔罗占卜
+    if (global.config.bot.tarotReader.enable) {
+      if (await tarotReader(context)) return true;
+    }
+
   //处理完所有模型回复后判断AImode，结束所有功能
   if (global.config.bot.AImode) {
     return true;
@@ -326,6 +334,10 @@ function handleAdminMsg(context) {
   // 重载配置
   if (args.reload) {
     try {
+      const nodePersist = require('node-persist');
+
+// 初始化node-persist
+nodePersist.init();
       loadConfig();
       replyMsg(context, '配置已重载');
     } catch (error) {
@@ -333,6 +345,10 @@ function handleAdminMsg(context) {
       replyMsg(context, String(error));
     }
     return true;
+  }
+
+  if(args.save){
+    dailyCountInstance.saveAndResetTimer()
   }
 
   return false;

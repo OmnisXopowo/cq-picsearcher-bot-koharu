@@ -1,7 +1,7 @@
 import { inspect } from 'util';
 import { pick } from 'lodash-es';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
-import { DailyCount } from '../../utils/dailyCount.mjs';
+import  dailyCountInstance  from '../../utils/dailyCount.mjs';
 import emitter from '../../utils/emitter.mjs';
 import { retryAsync } from '../../utils/retry.mjs';
 import { getglmContent, insertglmContent, deleteglmContent, createJWT } from './auth.mjs'
@@ -9,7 +9,6 @@ import { getImgs, hasImage } from '../../index.mjs'
 import _ from 'lodash-es';
 import CQ from '../../utils/CQcode.mjs';
 
-const dailyCount = new DailyCount();
 let overrideGroups = [];
 //群单例，群聊模式
 const singleton = true;
@@ -112,12 +111,22 @@ const callGML4API = (prompt, config, context) => {
 
     content.choices.push({ role: 'user', content: prompt });
 
+    let tools = [{
+      type: "web_search",
+      web_search: {
+          enable: true //默认为关闭状态（False） 禁用：False，启用：True。
+      }
+  }]
+
+
+
     const param = {
       model: 'glm-4-plus',
       messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
       ],
+      tools:tools
     };
 
 
@@ -276,10 +285,10 @@ export default async context => {
 
   const { userDailyLimit } = global.config.bot.glm4;
   if (userDailyLimit) {
-    if (dailyCount.get(context.user_id) >= userDailyLimit) {
+    if (dailyCountInstance.get(context.user_id) >= userDailyLimit) {
       global.replyMsg(context, '今日额度已达上限', false, true);
       return true;
-    } else dailyCount.add(context.user_id);
+    } else dailyCountInstance.add(context.user_id);
   }
 
   if (global.config.bot.debug) console.log('[glm] prompt:', prompt);

@@ -41,6 +41,8 @@ const arrayToSetPaths = new Set([
   'bot.tongyixingchen.whiteGroup',
   'bot.vits.blackGroup',
   'bot.vits.whiteGroup',
+  'bot.tarotReader.blackGroup',
+  'bot.tarotReader.whiteGroup',
 ]);
 const noCheckPaths = new Set([
   'bot.bilibili.push',
@@ -96,6 +98,7 @@ function loadJSON(path) {
     throw msg;
   }
 }
+
 
 export function loadConfig(init = false) {
   const conf = loadJSON(CONFIG_PATH);

@@ -60,6 +60,7 @@
     "klaw-sync": "^6.0.0",
     "koa": "^2.15.0",
     "lodash-es": "^4.17.21",
+    "lowdb": "^7.0.1",
     "md5": "^2.3.0",
     "minimist": "^1.2.8",
     "named-regexp-groups": "^1.0.6",
