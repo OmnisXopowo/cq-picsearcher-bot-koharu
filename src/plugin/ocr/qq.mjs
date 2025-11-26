@@ -7,11 +7,11 @@ import { retryAsync } from '../../utils/retry.mjs';
  * @param {{ file: string }} file 图片ID
  * @returns {Promise<string[]>} 识别结果
  */
-export default async ({ file }) =>
+export default async ({ url }) =>
   retryAsync(async () => {
-    const { data, retcode, message } = await global.bot('ocr_image', { image: file });
+    const { data, retcode, message } = await global.bot('ocr_image', { image: url });
     if (retcode !== 0) {
-      throw new Error(`[OCR ERROR] ${message}`);
+      throw new Error(`[OCR ERROR] ${message}\n${url}`);
     }
     return _.map(data.texts, 'text');
   });

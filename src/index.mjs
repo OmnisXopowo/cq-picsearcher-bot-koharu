@@ -3,20 +3,20 @@ import Fs from 'fs-extra';
 import _ from 'lodash-es';
 import minimist from 'minimist';
 import RandomSeed from 'random-seed';
+import characterglm from './plugin/AImodule/characterglm.mjs';
+import glm4 from './plugin/AImodule/glm4.mjs';
+import tarotReader, { goodmorningSensei } from './plugin/AImodule/tarotReader.mjs';
 import ascii2d from './plugin/ascii2d.mjs';
 import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
-import characterglm from './plugin/AImodule/characterglm.mjs';
-import glm4 from './plugin/AImodule/glm4.mjs';
-import tarotReader from './plugin/AImodule/tarotReader.mjs';
-import tongyixingchen from './plugin/AImodule/tongyixingchen.mjs';
 import corpus from './plugin/corpus.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
+import IqDB from './plugin/iqdb.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove ,pushDoujinshi} from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
 import saucenao, { snDB } from './plugin/saucenao.mjs';
-import IqDB from './plugin/iqdb.mjs';
 import sendSetu from './plugin/setu.mjs';
 import vits from './plugin/vits.mjs';
 import whatanime from './plugin/whatanime.mjs';
@@ -25,6 +25,7 @@ import { globalReg } from './setup/global.mjs';
 import asyncMap from './utils/asyncMap.mjs';
 import { execUpdate } from './utils/checkUpdate.mjs';
 import CQ from './utils/CQcode.mjs';
+import dailyCountInstance from './utils/dailyCount.mjs';
 import emitter from './utils/emitter.mjs';
 import { IS_DOCKER } from './utils/env.mjs';
 import { checkImageHWRatio, getAntiShieldedCqImg64FromUrl } from './utils/image.mjs';
@@ -33,9 +34,8 @@ import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
+import { setKeyValue, getKeyValue, getKeyObject, setKeyObject } from './utils/redisClient.mjs';
 import searchingMap from './utils/searchingMap.mjs';
-import  dailyCountInstance   from './utils/dailyCount.mjs';
-
 
 
 const { version } = Fs.readJsonSync(resolveByDirname(import.meta.url, '../package.json'));
@@ -56,6 +56,10 @@ globalReg({
   replyGroupForwardMsgs,
   replyPrivateForwardMsgs,
   sendGroupMsg,
+  setKeyValue,
+  getKeyValue,
+  setKeyObject,
+  getKeyObject
 });
 
 emitter.emit('botCreated');
@@ -151,6 +155,109 @@ bot
 // connect
 bot.connect();
 
+
+/**
+ * 处理回复给机器人的消息
+ * @type {import('cq-websocket').MessageEventListener}
+ */
+async function replyToBotHandle(context, rMsgData) {
+
+  // 去除消息中的CQ码，只保留纯文本内容
+  const pureText = context.message.replace(/\[CQ:[^\]]+\]/g, '').trim();
+
+  const illustObj = await checkRatingMsg(rMsgData);
+  if (illustObj) {
+    if (context.message.includes('/我丢') && isSendByAdmin(context)) {
+      illustRemove(illustObj);
+    } else {
+      const regex = /(\d+(?:\.\d{1,2})?)分/;
+      const match = pureText.match(regex);
+      if (match) {
+        const score = parseFloat(match[1], 10);
+        if (score >= 0 && score <= 5) {
+          illustRating(illustObj, context, score);
+        } else {
+          global.replyMsg(context, "老师，打分范围是0~5分，最多两位小数哦", false, true);
+        }
+      } else {
+        console.log(context.message + ':没有找到分数');
+      }
+    }
+  } else {
+    // 检查是否是画廊选择消息
+    const { checkGallerySelectMsg } = await import('./plugin/koharuApi.mjs');
+    const gallerySelectData = await checkGallerySelectMsg(rMsgData);
+    if (gallerySelectData) {
+      // 处理画廊选择
+      const regex = /^(\d+)$/;
+      const match = pureText.match(regex);
+      if (match) {
+        const choice = parseInt(match[1], 10);
+        const galleries = gallerySelectData.galleries;
+        
+        // 检查选择是否有效
+        if (choice >= 1 && choice <= galleries.length) {
+          const selectedGallery = galleries[choice - 1];
+          
+          // 导入并调用处理函数
+          const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
+          await handleEhentaiSelect(selectedGallery.link, context);
+        } else {
+          global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
+        }
+      }
+    }
+  }
+}
+
+/**
+ * AI功能处理
+ * @type {import('cq-websocket').MessageEventListener}
+ */
+async function commonAiHandle(e, context) {
+
+  // 早安
+  if (context.message.startsWith('/早安爱丽丝')) {
+    const completion = await goodmorningSensei();
+    global.replyMsg(context, completion, false, true);
+    return true;
+  }
+
+  // characterglm
+  if (global.config.bot.characterglm.enable) {
+    if (await characterglm(context)) return true;
+  }
+  // glm4
+  if (global.config.bot.glm4.enable) {
+    if (await glm4(context)) return true;
+  }
+
+  // 头衔
+  // if (global.config.bot.tongyixingchen.enable) {
+  //   if (await tongyixingchen(context)) return true;
+  // }
+
+  // 塔罗占卜
+  if (global.config.bot.tarotReader.enable) {
+    if (await tarotReader(context)) return true;
+  }
+
+
+  // 🦾🤖赛博斯坦内鬼
+  if (context.message.includes('💪🏻😃')) {
+    replyMsg(context, context.message.replace('💪🏻😃', '🦾🤖'));
+    return true;
+  }
+  // 发癫
+  if (context.message.startsWith('/发癫 ')) {
+    const sentence = psycho[Math.floor(Math.random() * psycho.length)];
+    const name = context.message.replace('/发癫 ', '');
+    replyMsg(context, sentence.replaceAll('<name>', name || '爱丽丝'));
+    return true;
+  }
+}
+
+
 /**
  * 通用处理
  * @type {import('cq-websocket').MessageEventListener}
@@ -176,6 +283,48 @@ async function commonHandle(e, context) {
   // 忽略指定正则的发言
   if (config.regs.ignore && new RegExp(config.regs.ignore).test(context.message)) return true;
 
+  // 处理ehentai选择结果
+  if (/^\d+$/.test(context.message)) {
+    try {
+      // 检查是否是ehentai选择回复，通过最近的推本消息查找
+      const recentMsgIds = await global.redis.keys(`tbSelect:${context.group_id}:*`);
+      if (recentMsgIds.length > 0) {
+        // 按时间排序，获取最新的消息
+        const sortedKeys = recentMsgIds.sort((a, b) => {
+          const aId = parseInt(a.split(':').pop());
+          const bId = parseInt(b.split(':').pop());
+          return bId - aId;
+        });
+        
+        // 获取最新的一条推本选择消息
+        const cacheKey = sortedKeys[0];
+        const cacheData = await global.getKeyObject(cacheKey);
+        if (cacheData) {
+          const choice = parseInt(context.message, 10);
+          const galleries = cacheData.galleries;
+          
+          // 检查选择是否有效
+          if (choice >= 1 && choice <= galleries.length) {
+            const selectedGallery = galleries[choice - 1];
+            
+            // 导入并调用处理函数
+            const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
+            await handleEhentaiSelect(selectedGallery.link,context);
+            
+            // 删除已使用的缓存
+            // await global.redis.del(cacheKey);
+            return true;
+          } else {
+            global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
+            return true;
+          }
+        }
+      }
+    } catch (error) {
+      console.error('处理ehentai选择时出错:', error);
+    }
+  }
+
   // 通用指令
   if (context.message === '--help') {
     replyMsg(context, 'https://yww.uy/drpg3s');
@@ -189,42 +338,30 @@ async function commonHandle(e, context) {
     replyMsg(context, 'https://github.com/Tsuk1ko/cq-picsearcher-bot');
     return true;
   }
-  //🦾🤖赛博斯坦内鬼
-  if (context.message.includes('💪🏻😃')) {
-    replyMsg(context, context.message.replace('💪🏻😃', '🦾🤖'));
-    return true;
-  }
-  //发癫
-  if (context.message.startsWith('/发癫 ')) {
-    const sentence = psycho[Math.floor(Math.random() * psycho.length)];
-    const name = context.message.replace('/发癫 ', '');
-    replyMsg(context, sentence.replaceAll('<name>', name ? name : '爱丽丝'));
-    return true;
-  }
-  // characterglm
-  if (global.config.bot.characterglm.enable) {
-    if (await characterglm(context)) return true;
-  }
-  //glm4
-  if (global.config.bot.glm4.enable) {
-    if (await glm4(context)) return true;
+
+  // 收藏入书库
+  if (context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/收藏") || context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/post")) {
+    if (await koharuApi(context)) return true;
   }
 
-  //tongyixingchen
-  if (global.config.bot.tongyixingchen.enable) {
-    if (await tongyixingchen(context)) return true;
+  // 处理/推本或/tb命令
+  if (context.message.startsWith('/推本') || context.message.startsWith('/tb')) {
+    if (await pushDoujinshi(context)) return true;
   }
 
-    //塔罗占卜
-    if (global.config.bot.tarotReader.enable) {
-      if (await tarotReader(context)) return true;
-    }
 
-  //处理完所有模型回复后判断AImode，结束所有功能
+  // 来点
+  if (context.message.startsWith("/来点")) {
+    if (await getCommon(context)) return true;
+  }
+
+
+  // 处理完所有模型回复后判断AImode，结束所有功能
   if (global.config.bot.AImode) {
+    commonAiHandle(e, context);
     return true;
   }
-  //继续非AI相关功能
+  // 继续非AI相关功能
 
   // vits
   if (global.config.bot.vits.enable) {
@@ -334,10 +471,7 @@ function handleAdminMsg(context) {
   // 重载配置
   if (args.reload) {
     try {
-      const nodePersist = require('node-persist');
-
-// 初始化node-persist
-nodePersist.init();
+      dailyCountInstance.loadMap();
       loadConfig();
       replyMsg(context, '配置已重载');
     } catch (error) {
@@ -347,8 +481,10 @@ nodePersist.init();
     return true;
   }
 
-  if(args.save){
-    dailyCountInstance.saveAndResetTimer()
+  if (args.save) {
+    dailyCountInstance.saveAndResetTimer();
+    replyMsg(context, '配置已保存');
+
   }
 
   return false;
@@ -379,20 +515,50 @@ async function privateAndAtMsg(e, context) {
     console.log(debugMsgDeleteBase64Content(context.message));
   }
 
-  if (await commonHandle(e, context)) {
-    e.stopPropagation();
-    return;
-  }
-
   if (context.message_type === 'group') {
     try {
-      //判断是否是回复的消息
+      // 判断是否是回复的消息
       const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
       if (rMsgId) {
         const { data } = await bot('get_msg', { message_id: Number(rMsgId) });
         if (data) {
           // 如果回复的是机器人的消息则忽略
           if (data.sender.user_id === context.self_id) {
+            replyToBotHandle(context, data);
+            e.stopPropagation();
+            return;
+          }
+        } else {
+          // 获取不到原消息，忽略
+        }
+      }
+    } catch (error) {
+      if (global.config.bot.debug) {
+        console.log(error);
+      }
+    }
+  }
+
+  if (await commonHandle(e, context)) {
+    e.stopPropagation();
+    return;
+  }
+
+  // if(await titleSet(e,context)){
+  //   e.stopPropagation();
+  //   return;
+  // }
+
+  if (context.message_type === 'group') {
+    try {
+      // 判断是否是回复的消息
+      const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
+      if (rMsgId) {
+        const { data } = await bot('get_msg', { message_id: Number(rMsgId) });
+        if (data) {
+          // 如果回复的是机器人的消息则忽略
+          if (data.sender.user_id === context.self_id) {
+            replyToBotHandle(context, data);
             e.stopPropagation();
             return;
           }
@@ -419,6 +585,8 @@ async function privateAndAtMsg(e, context) {
     e.stopPropagation();
     return;
   }
+
+
 
   if (hasImage(context.message)) {
     // 搜图
@@ -542,7 +710,7 @@ async function groupMsg(e, context) {
 
       global.config.bot.shike.keywords.forEach(key => {
         if (context.message.includes(key)) {
-          MsgReply += `${key}？？`
+          MsgReply += `${key}？？`;
         }
       });
 
@@ -664,7 +832,7 @@ async function searchImg(context, customDB = -1) {
     let snLowAcc = false;
     let useAscii2d = args.a2d;
     let useIqdb = args.iqdb;
-    let useWhatAnime = db === snDB.anime;
+    const useWhatAnime = db === snDB.anime;
 
 
 
@@ -683,12 +851,11 @@ async function searchImg(context, customDB = -1) {
         useIqdb = true;
         useAscii2d = true;
       }
-      if (!snRes.lowAcc && snRes.msg.indexOf('anidb.net') !== -1) useWhatAnime = true;
       if (snRes.msg.length > 0) needCacheMsgs.push(snRes.msg);
       await replier.reply(snRes.msg, snRes.warnMsg);
     }
 
-    //iqdb
+    // iqdb
     if (useIqdb) {
       const { ReturnMsg, success: iqdbSuc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
       if (asErr) {
@@ -747,6 +914,9 @@ async function searchImg(context, customDB = -1) {
     }
   }
 }
+
+
+
 
 function doOCR(context) {
   const msg = context.message;
@@ -1497,7 +1667,6 @@ const psycho = [
   "家……家人们！绝不当<name>的泄欲工具……唔姆……一切性行为都是猥亵的～啊～～，下……下作的，肮脏的。唔姆……今夜，嗯啊……我……我们携手共望，我是“提醒禁止做爱小……小助手～”嘶～啊啊～希望此刻看到消息的人可以跟我一起抵触做爱，唔～绝不当泄欲工具，明晚～～嗯呐～我会继续提醒大家禁止做爱，唔～啊啊啊啊❤️！！～放……放下性……性欲，做❤️……❤️……",
   "<name>的糖前面有一些硬硬的壳，我用牙齿啃一啃，顺便磨磨牙，不料因为糖太密集的缘故，我不能闭上嘴，所以，口水流了出来，为了不浪费，我将口水涂到了糖上面，包裹住了糖果，这样一来糖就更加顺滑了。🥰🥰🥰\n<name>的糖的壳边缘，可能是由于平时没有清洗的缘故，有一些别的味道，根据我多年的经验判断，是<name>平时洗脚的香皂的味道，淡淡的花的香气，虽然这种味道是<name>之外的味道，但是无疑的也为了<name>的这道美食提供了一种独特的韵味。🤤🤤🤤\n我慢慢的吮吸着，清理着，我把舌头展开尽量的贴合<name>的糖果，这样做是因为越贴合就越不容易被糖果壳给划着舌头，我的舌头尽力的伸进去，来回的蠕动着，做着吞咽的动作，<name>的糖果就在我的嘴里散发着独特的美味，这种味道无法用这世间的形容词来形容，或许这就是天使的味道吧。🥰🥰🥰\n接着<name>把糖果一颗或者几颗的喂给我，一颗、两颗、五颗，我都可以轻松接受，谁知道她一下子把十颗糖全部塞进了我的嘴里，我的嘴一下子就被填满了，因为糖太多，嘴闭不上的缘故，我口水直流，一直吞咽着，不敢有丝毫的怠慢，<name>糖果香甜的气息不仅仅充满了我的肺，也抵达了我的胃，而且还让我的味蕾好好的品尝到了无法形容的美味，此时此刻，我感觉我似乎是到达了天堂，而<name>真是我的天使！🥰🥰🥰\n然后<name>做出了一个惊人的举动，她把突然抽出十颗糖果，正当我吞了吞口水，准备擦嘴的时候，<name>的两个糖果塞进了我的鼻子里，看着我如痴如醉并且有点滑稽可笑的样子，<name>开心的笑了……🥰🥰🥰\n之后我问<name>感觉怎么样？<name>说：脚趾觉的热热的，脚心觉的凉凉的，脚心觉的痒痒的。🤤🤤🤤​",
   "<name>的眼睛如星光坠入深海，像谎言般美丽，为欺骗而存在，但我明知如此却依然忍不住去相信。<name>的眼神更是继承了深海的温度，冰冷，刺骨，满含了轻蔑与嘲弄，而我仍然愿意献上我的愚蠢，换它一瞬驻足，让我窥见您对我那一丝感情，即使它并不是爱意…… 不，<name>不该对我有爱意， <name>怎么可能对我这种微尘般渺小的蝼蚁有所爱意？我不该奢望，<name>是高高在上，是万众瞩目，是众星捧月，<name>是这样如神明般的存在，让我知道这样的存在就是我莫大的幸运了，我愿用我的尸骨成就您的高傲。 就让渺小的我被<name>踩在脚下，哪怕只能成为<name>王座下的那万分之一，都是我至高无上的荣耀。 <name>我的<name>……",
-  "昨天晚上我问了<name>一个问题。\n“你知道世界上最重的东西是什么吗？”\n“我当然知道，是……”可能觉得我问的问题另有含义，<name>停了下来，脸上泛起红晕，有点娇羞，扭扭捏捏的，声若蚊蝇：“是……我……我的……”\n“没错，就是你的身体。”看<name>磨磨蹭蹭，两根食指互相点来点去的样子，我忍不住滑了进去……\n奇怪，怎么像棉花糖一样轻飘飘的！\n<name>的身体再重，滑进去也是轻飘飘的。",
   "我曾经爱过你；<name>，也许，在我的心灵里还没有完全消失；但愿它不会再去打扰你；我也不想再使你难过悲伤。我曾经默默无语地，毫无指望的爱过你，我既忍着羞怯，又忍受着妒忌的折磨；我曾经那样真诚，那样温柔的爱过你但愿上帝保佑你，另一个人也会像我一样爱你。",
   "尊敬的各位群友，今天我要向大家表达我对恋人<name>的爱意。\n<name>，你是我生命中最重要的人。自从我们相遇以来，我的世界 m变得更加美好。你的温柔和关爱让我感到幸福和安心。你的聪明才智和勇敢无畏，让我深深地钦佩和敬仰。\n每当我看到你的笑容，我的内心都会充满喜悦。每当我遇到挫折和困难时，你总是在我身边，给我支持和鼓励。你的存在让我变得更加勇敢和坚强。\n在这个特殊的日子里，我想对你说，我爱你。我愿意和你一起经历人生的风风雨雨，分享人生的欢乐和快乐。无论何时何地，我都会珍惜你，爱护你，呵护你。\n最后，我想对你说一句话：“<name>，我爱你！❤️”\n谢谢大家！",
   "<name>!我的<name>!你带我走吧!\n我和<name>结婚快五年了，她换衣服还要躲着我，不许我看，我心血来潮时，就趁她不注意，直接推开门，冲进去，一把把她抱住。\n她就缩在我怀里，像仓鼠一样眨巴着眼睛，鬼鬼祟祟地左看右看，小脸红扑扑的，一动不敢动。\n我哭了，我连夜跑到卢浮宫外痛哭，保安问我为什么在这里哭，我哭着把<name>的照片给保安看，保安看了也痛哭，哭着说找到了卢浮宫丢失多年的艺术品。\n<name>，见到你的第一眼😍😍我就移不开眼😘😘第一次感到❤️❤️❤️心动的感觉，我多想和你有一个家🏕🏕我想和你步入婚姻的殿堂🥺🥺🥺🥺🥺后半辈子一起度过余生🤤🤤🤤💘💘❤️为了能和你有个美好的开始🌹🌹👉👈我决定先以这样的方式让你注意我👏👏虽然我知道你可能不会在意我😭👊😭👊😭👊但是对你心动的一瞬间❤️❤️❤️🌹🌹🌹😍😍😍🥰🥰我就决定了👅🐶我要做你的天狗👅🐶\n<name>，我爱你，请与我交往！！\n我低下头，闭上眼，是啊，她那么的楚楚可怜，美丽，动人，……可以想象 她那小巧敏感的脚丫🤤在鞋子的庇护下，在前后摆动着吧😭？或像小鸟般轻轻点着地。我继续等着<name>的回答。\n我轻轻睁开眼，瞄了瞄她那俊俏动人的脸庞已经泛上了微微的红晕。\n“笨蛋……你……”我偷偷笑着，可以被她臭骂一顿……也算人身一大美事吧\n我好累，这繁重的生活压得我喘不过气来，我根本就不快乐，有什么事情都是自己一个人抗，这几个夜晚我是哭累了才睡着的，好多话只能给自己说，眼泪掉了是自己擦，我不想轻易留眼泪，可是眼泪它不听话，偏偏自己就会掉下来，你说我怎么就一点都不坚强呢，其实我只想说，我为什么不能和<name>在一起呢\n你是我心里的宝！！！<name>！！我的宝贝😭我的老婆😭我的小可爱😭我的生命之光😭我的欲望之火😭你是上帝之光😭是耶稣的爱❤️是不灭神话💘你就是启明星🌹冉冉升起的时候照亮了我的心❤️我的一切🌹就算让我飞到宇宙给你摘星星月亮太阳我也愿意为你拿到🌹🌹🌹你就是宙的神话是天边最亮的晨星！！！\n<name>你带我走吧！为什么不带我走啊!我真的好爱好爱你啊😭👊😭👊😭👊!",

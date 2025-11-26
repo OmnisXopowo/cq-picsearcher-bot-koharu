@@ -17,6 +17,8 @@ const snDB = {
   doujin: 18,
   anime: 21,
   原图: 10000,
+  来源: 10001,
+
 };
 
 /**
@@ -25,9 +27,10 @@ const snDB = {
  * @param {string} imgURL 图片地址
  * @param {string} db 搜索库
  * @param {boolean} [debug=false] 是否调试
+ * @param {boolean} [withoutThumbnail=false] 是否不显示缩略图
  * @returns Promise 返回消息、返回提示
  */
-async function doSearch(imgURL, db, debug = false) {
+async function doSearch(imgURL, db, debug = false, withoutThumbnail = false) {
   const hosts = global.config.saucenaoHost;
   const apiKeys = global.config.saucenaoApiKey;
   const index = hostsI++;
@@ -158,6 +161,7 @@ async function doSearch(imgURL, db, debug = false) {
             thumbnail: hideThumbnail ? null : thumbnail,
             author_url: member_id && url.indexOf('pixiv.net') >= 0 ? `https://pixiv.net/u/${member_id}` : null,
             source: CQ.escape(source),
+            withoutThumbnail
           });
 
           success = true;
@@ -184,6 +188,7 @@ async function doSearch(imgURL, db, debug = false) {
               url,
               title: `(${simText}%) ${CQ.escape(doujinName)}`,
               thumbnail: hideThumbnail ? null : thumbnail,
+              withoutThumbnail
             });
           }
 
@@ -226,9 +231,9 @@ async function doSearch(imgURL, db, debug = false) {
   };
 }
 
-async function getShareText({ url, title, thumbnail, author_url, source }) {
+async function getShareText({ url, title, thumbnail, author_url, source ,withoutThumbnail=false}) {
   const texts = [title];
-  if (thumbnail && !global.config.bot.hideImg) {
+  if (thumbnail && !global.config.bot.hideImg && !withoutThumbnail) {
     const mode = global.config.bot.antiShielding;
     if (mode > 0) texts.push(await getAntiShieldedCqImg64FromUrl(thumbnail, mode));
     else texts.push(await getCqImg64FromUrl(thumbnail));
@@ -254,6 +259,9 @@ function getSearchResult(host, api_key, imgURL, db = 999) {
 
   const dbParam = {};
   switch (db) {
+    case snDB.来源:
+      dbParam.dbs = [9, 5];
+      break;
     case snDB.doujin:
       dbParam.dbs = [18, 38];
       break;

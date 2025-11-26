@@ -147,7 +147,7 @@ class CQCode {
       const path = await dlImgToCache(url, config, true);
       return new CQCode('image', { file: pathToFileURL(path).href, type }).toString();
     } catch (e) {
-      logError('[error] cq img pre-download');
+      logError('[error] cq img pre-download:'+url);
       logError(e);
     }
     return new CQCode('image', { file: url, type }).toString();

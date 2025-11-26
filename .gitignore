@@ -72,3 +72,7 @@ typings/
 .next
 .vscode/launch.json
 config.jsonc.backup
+.vs/slnx.sqlite
+.vs/ProjectSettings.json
+# Voices bank (large media files)
+src/voicesBank/

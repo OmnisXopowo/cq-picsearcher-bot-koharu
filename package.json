@@ -37,7 +37,7 @@
     "@napi-rs/canvas": "^0.1.44",
     "@tsuk1ko/cq-websocket": "^3.0.0",
     "await-lock": "^2.2.2",
-    "axios": "^1.6.5",
+    "axios": "^1.6.7",
     "chatglm": "^0.4.0",
     "cheerio": "^1.0.0-rc.12",
     "comment-json": "^4.2.3",
@@ -53,6 +53,7 @@
     "http-terminator": "^3.2.0",
     "https-proxy-agent": "^5.0.1",
     "image-size": "^1.1.1",
+    "ioredis": "^5.4.1",
     "is-stream": "^2.0.1",
     "jimp": "^0.22.10",
     "json-bigint": "^1.0.0",
@@ -67,19 +68,24 @@
     "nhentai-api": "2.0.4",
     "node-cache": "^5.1.2",
     "node-fetch": "^2.7.0",
+    "openai": "^4.76.0",
     "pm2": "^5.3.0",
     "promise-limit": "^2.7.0",
     "qs": "^6.11.2",
     "querystring": "^0.2.1",
     "random-seed": "^0.3.0",
     "remove-markdown": "^0.5.0",
+    "sharp": "^0.33.5",
     "socks-proxy-agent": "^7.0.0",
+    "sqlite3": "^5.1.7",
+    "tesseract.js": "^5.1.1",
     "url-join": "^5.0.0"
   },
   "devDependencies": {
     "@tsuk1ko/postversion": "^1.0.2",
     "@types/fs-extra": "^11.0.4",
     "@types/lodash-es": "^4.17.12",
+    "@types/node": "^22.9.1",
     "eslint": "^8.56.0",
     "eslint-config-prettier": "^9.1.0",
     "eslint-config-standard": "^17.1.0",
@@ -88,6 +94,7 @@
     "eslint-plugin-node": "^11.1.0",
     "eslint-plugin-promise": "^6.1.1",
     "prettier": "^3.1.1",
-    "typeof-jsonc": "^1.1.10"
+    "typeof-jsonc": "^1.1.10",
+    "typescript": "^5.6.3"
   }
 }

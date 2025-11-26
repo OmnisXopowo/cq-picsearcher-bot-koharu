@@ -1,9 +1,11 @@
 import { readFileSync } from 'fs';
+import path from 'path';
 import { promisify } from 'util';
 import imageSize from 'image-size';
 import Jimp from 'jimp';
 import { sumBy } from 'lodash-es';
 import promiseLimit from 'promise-limit';
+import sharp  from 'sharp';
 import asyncMap from './asyncMap.mjs';
 import Axios from './axiosProxy.mjs';
 import { createCache, getCache } from './cache.mjs';
@@ -194,3 +196,26 @@ export const checkImageHWRatio = async (url, max) => {
     return true;
   }
 };
+
+/*
+* 旋转图片
+* @param {string} inputPath - 原始图片路径
+* @param {string} outputPath - 旋转后输出图片路径
+* @param {number} angle - 旋转角度
+*/
+export  async function rotateImage(inputPath, outputPath, angle) {
+ try {
+   // 确保输入路径和输出路径是绝对路径
+   const absoluteInputPath = path.resolve(inputPath);
+   const absoluteOutputPath = path.resolve(outputPath);
+
+   // 使用sharp旋转图片
+   await sharp(absoluteInputPath)
+     .rotate(angle)
+     .toFile(absoluteOutputPath);
+
+   console.log(`图片已旋转并保存到: ${absoluteOutputPath}`);
+ } catch (error) {
+   console.error('旋转图片时发生错误:', error);
+ }
+}

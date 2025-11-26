@@ -7,6 +7,7 @@ export declare interface Config {
     whatanimeHost: string;
     whatanimeToken: string;
     ascii2dHost: string;
+    reverseProxy: string;
 }
 
 declare interface Bot {
@@ -110,7 +111,8 @@ declare interface CharacterGLM {
 
 declare interface tarotReader {
     enable: boolean;
-    regex:String;
+    regexDivination:String;
+    regexFortune:String;
     prependMessages: [{ role: string, content: string }];
     apiKey: string;
     userDailyLimit: number;
@@ -298,4 +300,61 @@ declare interface Cqw {
     reconnection: boolean;
     reconnectionAttempts: number;
     reconnectionDelay: number;
+}
+
+export interface PixivIllustDetail {
+    id:                     number;
+    title:                  string;
+    type:                   string;
+    image_urls:             ImageUrls;
+    caption:                string;
+    restrict:               number;
+    user:                   User;
+    tags:                   Tag[];
+    tools:                  string[];
+    create_date:            Date;
+    page_count:             number;
+    width:                  number;
+    height:                 number;
+    sanity_level:           number;
+    x_restrict:             number;
+    series:                 null;
+    meta_single_page:       MetaSinglePage;
+    meta_pages:             any[];
+    total_view:             number;
+    total_bookmarks:        number;
+    is_bookmarked:          boolean;
+    visible:                boolean;
+    is_muted:               boolean;
+    total_comments:         number;
+    illust_ai_type:         number;
+    illust_book_style:      number;
+    comment_access_control: number;
+}
+
+export interface ImageUrls {
+    square_medium: string;
+    medium:        string;
+    large:         string;
+}
+
+export interface MetaSinglePage {
+    original_image_url: string;
+}
+
+export interface Tag {
+    name:            string;
+    translated_name: null | string;
+}
+
+export interface User {
+    id:                 number;
+    name:               string;
+    account:            string;
+    profile_image_urls: ProfileImageUrls;
+    is_followed:        boolean;
+}
+
+export interface ProfileImageUrls {
+    medium: string;
 }

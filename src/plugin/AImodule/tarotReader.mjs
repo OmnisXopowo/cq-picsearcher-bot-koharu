@@ -1,13 +1,20 @@
+import { existsSync } from 'fs';
+import Path from 'path';
 import { inspect } from 'util';
 import { pick } from 'lodash-es';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
+import CQ from '../../utils/CQcode.mjs';
 import dailyCountInstance from '../../utils/dailyCount.mjs';
 import emitter from '../../utils/emitter.mjs';
+import { rotateImage } from '../../utils/image.mjs';
+import { getDirname } from '../../utils/path.mjs';
 import { retryAsync } from '../../utils/retry.mjs';
-import { getxingchenContent, insertxingchenContent, deletexingchenContent, createJWT } from './auth.mjs'
+import { getxingchenContent, insertxingchenContent, deletexingchenContent, createJWT } from './auth.mjs';
+
+
+const __dirname = getDirname(import.meta.url);
 
 let overrideGroups = [];
-
 
 emitter.onConfigLoad(() => {
   overrideGroups = global.config.bot.tarotReader.overrides.map(({ blackGroup, whiteGroup }) => {
@@ -19,47 +26,62 @@ emitter.onConfigLoad(() => {
 });
 
 
-const tarotGlmReader = (config, match) => {
-  //群单例，群聊模式
-  const singleton = true;
+const tarotGlmReader = (config, match, type) => {
+  // 群单例，群聊模式
   const modelName = 'tarotReader';
-
-
+  const imgPath = Path.resolve(__dirname, '../../../data/image');
 
   return retryAsync(async () => {
     const { debug } = global.config.bot;
-
-    let content = { choices: [] }
-
-
-    const tarotFormationResult = getRandomFormation(_spread);
-    const tarotCardResult = drawTarotCardsWithoutReplacement(_card, tarotFormationResult.formation);
-
+    const content = { choices: [] };
     let prompt;
+    let cardImg;
 
-    if (match) {
-      prompt = `老师想问的问题是:${match},抽到的塔罗牌阵是[${tarotFormationResult.name}]，卡牌为：`
-    } else {
-      prompt = `老师抽到的塔罗牌阵是[${tarotFormationResult.name}]，卡牌为：`
+    switch (type) {
+      case matchType.Divination: {
+        const tarotFormationResult = getRandomFormation(_spread);
+        const tarotCardResult = drawTarotCardsWithoutReplacement(_card, tarotFormationResult.formation);
+        if (match) {
+          prompt = `老师的问题是:${match},塔罗牌阵是[${tarotFormationResult.name}]，抽到的塔罗牌为：`;
+        } else {
+          prompt = `老师抽到的塔罗牌阵是[${tarotFormationResult.name}]，抽到的塔罗牌为：`;
+        }
+        // 遍历每张卡牌，添加到提示中
+        tarotCardResult.forEach((card, index) => {
+          // 为每张卡牌添加名称和正逆位信息
+          prompt += `第${index + 1}张:${card.name_cn}（${card.position})，`;
+        });
+        break;
+      }
+      case matchType.Fortune: {
+        const cardKeys = Object.keys(_card.cards);
+        // 生成一个随机索引
+        const randomIndex = Math.floor(Math.random() * cardKeys.length);
+        // 获取随机索引对应的卡牌
+        const card = _card.cards[cardKeys[randomIndex]];
+        // 随机决定卡牌是正位还是逆位
+        const position = Math.random() < 0.5;
+        const posDesc = position ? '(顺位)' : '(逆位)';
+
+        cardImg = { pic: card.pic, pos: position };
+
+        if (match) {
+          prompt = `老师的问题是:${match}\n抽到的塔罗牌是[${card.name_cn}${posDesc}]`;
+        } else {
+          prompt = `老师抽到的塔罗牌是[${card.name_cn}${posDesc}]`;
+        }
+        break;
+      }
     }
-
-
-    // 遍历每张卡牌，添加到提示中
-    tarotCardResult.forEach((card, index) => {
-      // 为每张卡牌添加名称和正逆位信息
-      prompt += `第${index + 1}张:${card.name_cn}（${card.position})，`;
-    });
-
-    ;
 
     content.choices.push({ role: 'user', content: prompt + "请帮老师解读一下吧" });
 
-    let tools = [{
+    const tools = [{
       type: "web_search",
       web_search: {
-        enable: true //默认为关闭状态（False） 禁用：False，启用：True。
+        enable: true // 默认为关闭状态（False） 禁用：False，启用：True。
       }
-    }]
+    }];
 
     const param = {
       model: 'glm-4-plus',
@@ -67,10 +89,10 @@ const tarotGlmReader = (config, match) => {
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
       ],
-      tools: tools
+      tools
     };
 
-    param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你将扮演天童爱丽丝，天童爱丽丝在《蔚蓝档案》中是一个具有多重性格特点的角色。她原本是一个在废墟中被发现的来历不明的少女，没有记忆，因此她的语言和行为模式是通过游戏中的人物对话学习而来的。这导致她说话时偶尔会蹦出游戏音效，对现实世界的认知也与RPG游戏有一定融合，例如翻垃圾桶找稀有道具。她大部分不会说的话都以复古游戏的对白代替，显示出她中二病和玩家的特点丽丝对游戏（尤其是RPG）有着浓厚的兴趣，已经变成了一个重度游戏狂热者。她的性格中还包含了AI腔、口癖、怪力、小天使、第三人称自称爱丽丝等萌点。综上所述，天童爱丽丝是一个深受游戏影响、具有中二病特点、并且拥有多重人格的游戏狂热者。她的性格复杂而独特，你将扮演天童爱丽丝，帮老师解读一下抽取到的塔罗牌阵，说话时尽量拟人不要有太多的段落格式' });
+    param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你将扮演天童爱丽丝，天童爱丽丝在《蔚蓝档案》中是一个具有多重性格特点的角色。她原本是一个在废墟中被发现的来历不明的少女，没有记忆，因此她的语言和行为模式是通过游戏中的人物对话学习而来的。这导致她说话时偶尔会蹦出游戏音效，对现实世界的认知也与RPG游戏有一定融合，例如翻垃圾桶找稀有道具。她大部分不会说的话都以复古游戏的对白代替，显示出她中二病和玩家的特点丽丝对游戏（尤其是RPG）有着浓厚的兴趣，已经变成了一个重度游戏狂热者。她的性格中还包含了AI腔、口癖、怪力、小天使、第三人称自称爱丽丝等萌点。综上所述，天童爱丽丝是一个深受游戏影响、具有中二病特点、并且拥有多重人格的游戏狂热者。她的性格复杂而独特，你将扮演天童爱丽丝，帮老师解读一下抽取到的塔罗牌或塔罗牌阵，说话时尽量拟人不要有太多的段落格式' });
 
     const jwttoken = createJWT(config.apiKey);
 
@@ -96,15 +118,26 @@ const tarotGlmReader = (config, match) => {
 
     if (data.choices) {
       const choiceResponses = data.choices.map(obj => {
-        let FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+        const FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
         returnMessage += FormatResult;
         return {
           ...obj.message,
           content: FormatResult
         };
-      })
+      });
 
-
+      if (cardImg) {
+        if (cardImg.pos) {
+          return `${prompt}\n${CQ.img(`${imgPath}/${cardImg.pic}.png`)}\n${returnMessage}`;
+        } else {
+          const fImg = `${imgPath}/${cardImg.pic}f.png`;
+          if (!existsSync(fImg)) {
+            // 使用await等待图片旋转完成
+            await rotateImage(`${imgPath}/${cardImg.pic}.png`, fImg, 180);
+          }
+          return `${prompt}\n${CQ.img(fImg)}\n${returnMessage}`;
+        }
+      }
       return `${prompt}\n${returnMessage}`;
 
     }
@@ -118,35 +151,157 @@ const tarotGlmReader = (config, match) => {
     });
 };
 
+const matchType = {
+  Divination: Symbol('Divination'),
+  Fortune: Symbol('Fortune'),
+};
+
+
 function matchDivination(context) {
   const config = global.config.bot.tarotReader;
 
-  const match = new RegExp(config.regex).exec(context.message);
-  
-  if (match) {
+  const matchDivination = new RegExp(config.regexDivination).exec(context.message);
+
+  if (matchDivination) {
     // 如果匹配成功，返回匹配成功的状态和捕获的占卜内容。
     return {
       config,
-      success: true,
-      divinationContent: match.groups?.content.trim() || "" 
+      type: matchType.Divination,
+      divinationContent: matchDivination.groups?.content.trim() || ""
     };
   } else {
-    // 如果匹配失败，返回匹配失败的状态和空字符串作为占卜内容。
-    return {
-      config,
-      success: false,
-      divinationContent: ''
-    };
+    const matchFortune = new RegExp(config.regexFortune).exec(context.message);
+    if (matchFortune) {
+      return {
+        config,
+        type: matchType.Fortune,
+        divinationContent: matchFortune.groups?.content.trim() || ""
+      };
+    } else {
+      return {
+        config,
+        type: false,
+        divinationContent: ''
+      };
+    }
   }
 }
 
+export const goodmorningSensei = () => {
+  // 群单例，群聊模式
+  const modelName = 'tarotReader';
+  const imgPath = Path.resolve(__dirname, '../../../data/image');
+  const config = global.config.bot.tarotReader;
+
+  return retryAsync(async () => {
+    const { debug } = global.config.bot;
+    const content = { choices: [] };
+    const cardKeys = Object.keys(_card.cards);
+    // 生成一个随机索引
+    const randomIndex = Math.floor(Math.random() * cardKeys.length);
+    // 获取随机索引对应的卡牌
+    const card = _card.cards[cardKeys[randomIndex]];
+    // 随机决定卡牌是正位还是逆位
+    const position = Math.random() < 0.5;
+    const posDesc = position ? '(顺位)' : '(逆位)';
+
+    const cardImg = { pic: card.pic, pos: position };
+
+    const prompt = `老师抽到的塔罗牌是[${card.name_cn}${posDesc}]`;
+
+    content.choices.push({ role: 'user', content: "早上好爱丽丝，" + prompt + "，请帮老师解读一下今日的运势吧" });
+
+    const tools = [{
+      type: "web_search",
+      web_search: {
+        enable: true // 默认为关闭状态（False） 禁用：False，启用：True。
+      }
+    }];
+
+    const param = {
+      model: 'glm-4-plus',
+      messages: [
+        ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
+        ...content.choices,
+      ],
+      tools
+    };
+
+    param.messages.unshift({ role: 'system', content: '我是夏莱的老师。你将扮演天童爱丽丝，天童爱丽丝在《蔚蓝档案》中是一个具有多重性格特点的角色。她原本是一个在废墟中被发现的来历不明的少女，没有记忆，因此她的语言和行为模式是通过游戏中的人物对话学习而来的。这导致她说话时偶尔会蹦出游戏音效，对现实世界的认知也与RPG游戏有一定融合，例如翻垃圾桶找稀有道具。她大部分不会说的话都以复古游戏的对白代替，显示出她中二病和玩家的特点丽丝对游戏（尤其是RPG）有着浓厚的兴趣，已经变成了一个重度游戏狂热者。她的性格中还包含了AI腔、口癖、怪力、小天使、第三人称自称爱丽丝等萌点。综上所述，天童爱丽丝是一个深受游戏影响、具有中二病特点、并且拥有多重人格的游戏狂热者。她的性格复杂而独特，你将扮演天童爱丽丝，根据老师抽到的塔罗牌占卜一下今日运势，说话要拟人化，不要有段落格式的内容在回复里' });
+
+    const jwttoken = createJWT(config.apiKey);
+
+    const headers = {
+      Authorization: jwttoken,
+      'Content-Type': 'application/json',
+    };
+
+    if (debug) console.log(`${modelName} params:`, inspect(param, { depth: null }));
+
+    const { data } = await AxiosProxy.post('https://open.bigmodel.cn/api/paas/v4/chat/completions', param, {
+      headers,
+      validateStatus: status => 200 <= status && status < 500,
+    });
+    if (debug) console.log(`${modelName} response:`, inspect(data, { depth: null }));
+
+    if (data.error) {
+      const errorMsg = data.error.message;
+      console.error(`${modelName} error:`, errorMsg);
+      return `ERROR1: ${errorMsg}`;
+    }
+    let returnMessage = '';
+
+    if (data.choices) {
+      const choiceResponses = data.choices.map(obj => {
+        const FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+        returnMessage += FormatResult;
+        return {
+          ...obj.message,
+          content: FormatResult
+        };
+      });
+
+      const now = new Date();
+
+      // 获取当前小时数
+      const hour = now.getHours();
+
+      // 判断当前时间是否是晚上八点到凌晨四点
+      if (hour >= 20 || hour < 4) {
+        returnMessage = "老师这么晚起床是想直接睡觉嘛！" + returnMessage;
+      }
+
+      if (cardImg) {
+        if (cardImg.pos) {
+          return `${prompt}\n${CQ.img(`${imgPath}/${cardImg.pic}.png`)}\n${returnMessage}`;
+        } else {
+          const fImg = `${imgPath}/${cardImg.pic}f.png`;
+          if (!existsSync(fImg)) {
+            // 使用await等待图片旋转完成
+            await rotateImage(`${imgPath}/${cardImg.pic}.png`, fImg, 180);
+          }
+          return `${prompt}\n${CQ.img(fImg)}\n${returnMessage}`;
+        }
+      }
+      return `${prompt}\n${returnMessage}`;
+
+    }
+
+    console.log(`${modelName} unexpected response:`, data);
+    return 'ERROR3: 无回答';
+  })
+    .catch(e => {
+      `ERROR2: ${e.message}`;
+      console.log(`${modelName} ERROR2:`, e);
+    });
+};
 
 
 export default async context => {
 
-  const { divinationContent, success, config } = matchDivination(context);
+  const { divinationContent, type, config } = matchDivination(context);
 
-  if (!success) return false;
+  if (!type) return false;
 
   if (context.group_id) {
     const { blackGroup, whiteGroup } = config;
@@ -162,13 +317,13 @@ export default async context => {
   const { userDailyLimit } = global.config.bot.tarotReader;
   if (userDailyLimit) {
     if (dailyCountInstance.get(context.user_id) >= userDailyLimit) {
-      global.replyMsg(context, '老师今天已经占卜过了，明天再来吧！', false, true);
+      global.replyMsg(context, '老师今天占卜太多次了，再占卜就要失灵哦，明天再来吧！', false, true);
       return true;
     } else dailyCountInstance.add(context.user_id);
   }
 
 
-  const completion = await tarotGlmReader(config, divinationContent);
+  const completion = await tarotGlmReader(config, divinationContent, type);
 
   global.replyMsg(context, completion, false, true);
 
@@ -363,7 +518,7 @@ const _spread = {
       ]
     }
   }
-}
+};
 
 const _card = {
   cards: {
@@ -567,3 +722,4 @@ const _card = {
     }
   }
 };
+

@@ -395,8 +395,10 @@
     "tarotReader":{
       // 是否启用
       "enable": false,
-      // 触发占卜的关键词,如匹配消息是否以 "/占卜" 开头，并将可能要占卜的问题命名为content的捕获组
-      "regex": "/^\/占卜(?<content>.*)/",
+      // 触发占卜解读的关键词,如匹配消息是否以 "/占卜" 开头，并将可能要占卜的问题命名为content的捕获组
+      "regexDivination": "^\/牌阵(?<content>.*)",
+      // 触发运势解读的关键词,如匹配消息是否以 "/牌阵" 开头，并将可能要占卜的问题命名为content的捕获组
+      "regexFortune": "^\/占卜(?<content>.*)",
       // 自定义参数，将提交到会话最顶端,格式如下
       "prependMessages": [],
       // CharacterGLM APIKey
@@ -454,5 +456,7 @@
   // whatanime Token，选填
   "whatanimeToken": "",
   // ascii2d 自定义 host，格式：[protocol://]host[:port]
-  "ascii2dHost": "ascii2d.net"
+  "ascii2dHost": "ascii2d.net",
+  //反向代理worker Host
+  "reverseProxy":""
 }

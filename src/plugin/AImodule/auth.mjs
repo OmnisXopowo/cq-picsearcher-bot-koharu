@@ -8,7 +8,7 @@ export function genToken(apiKey, expireSeconds = 24 * 3600) {
 
   let jwttoken = jwtcache.get(apiKey);
   if (!jwttoken) {
-    jwttoken = createJWT(apiKey, expireSeconds)
+    jwttoken = createJWT(apiKey, expireSeconds);
     jwtcache.set(apiKey, jwt);
 
     const update = () => {
@@ -28,7 +28,7 @@ export function createJWT(apiKey, expireSeconds = 24 * 3600) {
     api_key,
     exp: now + expireSeconds * 1000,
     timestamp: now,
-  };
+  };  
 
   const options = {
     algorithm: 'HS256',
@@ -45,7 +45,7 @@ export function createJWT(apiKey, expireSeconds = 24 * 3600) {
 
 export function getglmContent(group, user,model) {
   const key = `${group}-${user}-${model}`;
-  let contents = choicesCache.get(key);
+  const contents = choicesCache.get(key);
   if (contents) {
     return contents;
   } else {
@@ -59,19 +59,19 @@ export function insertglmContent(group, user, NewChoices, requestid,model) {
   const contents = {
     choices: NewChoices,
     request_id: requestid,
-  }
-  choicesCache.set(key, contents)
+  };
+  choicesCache.set(key, contents);
 }
 
 export function deleteglmContent(group, user,model) {
   const key = `${group}-${user}-${model}`;
-  choicesCache.del(key)
+  choicesCache.del(key);
 }
 
 
 export function getxingchenContent(group, user,model) {
   const key = `${group}-${user}-${model}`;
-  let contents = choicesCache.get(key);
+  const contents = choicesCache.get(key);
   if (contents) {
     return contents;
   } else {
@@ -85,11 +85,11 @@ export function insertxingchenContent(group, user, NewChoices, requestid,model) 
   const contents = {
     choices: NewChoices,
     request_id: requestid,
-  }
-  choicesCache.set(key, contents)
+  };
+  choicesCache.set(key, contents);
 }
 
 export function deletexingchenContent(group, user,model) {
   const key = `${group}-${user}-${model}`;
-  choicesCache.del(key)
+  choicesCache.del(key);
 }
