@@ -1,8 +1,6 @@
 import _ from 'lodash-es';
-import CQ from './CQcode.mjs';
-import { getAntiShieldedCqImg64FromUrl } from './image.mjs';
 
-const getKey = (img, db) => `${img.file}.${db}`;
+const getKey = (img, db) => `${img.key || img.file}.${db}`;
 
 const CTX_COMPARE_KEY = {
   private: 'user_id',
@@ -80,14 +78,13 @@ class SearchingMap extends Map {
         mainPromises.push(promise);
         return promise;
       },
-      end: async ({ file, url }) => {
+      end: async img => {
         await Promise.all(mainPromises);
         super.delete(key);
 
         const restCtxs = needGroupForward ? ctxs : _.tail(ctxs);
         const antiShieldingMode = global.config.bot.antiShielding;
-        const cqImg =
-          antiShieldingMode > 0 ? await getAntiShieldedCqImg64FromUrl(url, antiShieldingMode) : CQ.img(file);
+        const cqImg = antiShieldingMode > 0 ? await img.getAntiShieldedCqImg64(antiShieldingMode) : img.toCQ();
 
         for (const ctx of restCtxs) {
           try {
@@ -97,7 +94,7 @@ class SearchingMap extends Map {
               pmSearchResult,
               pmSearchResultTemp,
             });
-          } catch (e) {}
+          } catch {}
         }
       },
     };

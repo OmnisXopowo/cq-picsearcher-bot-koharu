@@ -50,7 +50,7 @@ async function dlImgAndAntiShielding(url) {
   const setting = global.config.bot.setu;
   const proxy = setting.pximgProxy.trim();
   const img = await Jimp.read(
-    proxy ? Buffer.from(await Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data)) : url
+    proxy ? Buffer.from(await Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data)) : url,
   );
   return await imgAntiShielding(img, global.config.bot.setu.antiShielding);
 }
@@ -64,7 +64,7 @@ async function getAntiShieldingBase64(url, fallbackUrl) {
   try {
     const origBase64 = await dlImgAndAntiShielding(url);
     if (checkBase64RealSize(origBase64)) return origBase64;
-  } catch (error) {
+  } catch {
     // 原图过大
   }
   if (!fallbackUrl) return;

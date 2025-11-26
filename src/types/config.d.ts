@@ -2,12 +2,30 @@ export declare interface Config {
     autoUpdateConfig: boolean;
     cqws: Cqw;
     bot: Bot;
+    flaresolverr: Flaresolverr;
+    backupGroupMember: BackupGroupMember;
     saucenaoHost: string;
     saucenaoApiKey: string;
     whatanimeHost: string;
     whatanimeToken: string;
     ascii2dHost: string;
     reverseProxy: string;
+}
+
+declare interface BackupGroupMember {
+    enable: boolean;
+    format: string;
+    whitelist: any[];
+    blacklist: any[];
+}
+
+declare interface Flaresolverr {
+    url: string;
+    session: string;
+    proxy: object;
+    autoDestroySession: boolean;
+    enableForAscii2d: boolean;
+    enableForNHentai: boolean;
 }
 
 declare interface Bot {
@@ -22,6 +40,7 @@ declare interface Bot {
     autoAddFriend: boolean;
     addFriendAnswers: any[];
     autoAddGroup: boolean;
+    spaceAfterAt: boolean;
     antiShielding: number;
     handleBannedHosts: boolean;
     handleBannedHostsWithLegacyMethod: boolean;
@@ -31,8 +50,10 @@ declare interface Bot {
     hideImgWhenLowAcc: boolean;
     hideImgWhenWhatanimeR18: boolean;
     whatanimeSendVideo: boolean;
+    whatanimeLocalUpload: boolean;
     saucenaoDefaultDB: string;
     saucenaoLowAcc: number;
+    saucenaoLocalUpload: boolean;
     useAscii2dWhenQuotaExcess: boolean;
     useAscii2dWhenLowAcc: boolean;
     useAscii2dWhenFailed: boolean;
@@ -49,7 +70,6 @@ declare interface Bot {
     privateForwardSearchResult: boolean;
     groupForwardSearchResult: boolean;
     proxy: string;
-    cfTLSVersion: string;
     checkUpdate: number;
     ignoreOfficialBot: boolean;
     canvasLibrary: string;
@@ -92,6 +112,23 @@ declare interface Like {
     adminDailyLike: number;
 }
 
+declare interface Chatgpt {
+    enable: boolean;
+    regexp: string;
+    model: string;
+    useChatAPI: boolean;
+    maxTokens: number;
+    prependMessages: any[];
+    additionParams: AdditionParam;
+    apiKey: string;
+    organization: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
+    customAPI: string;
+    customChatAPI: string;
+}
 declare interface CharacterGLM {
     enable: boolean;
     nickname: string;
@@ -119,6 +156,8 @@ declare interface tarotReader {
     blackGroup: Set<number | string>;
     whiteGroup: Set<number | string>;
     overrides: any[];
+    customAPI: string;
+    customChatAPI: string;
 }
 
 declare interface glm4 {
@@ -157,6 +196,8 @@ declare interface Bilibili {
     dynamicImgPreDl: boolean;
     dynamicMergeImgs: boolean;
     imgPreDlTimeout: number;
+    dynamicLinkPosition: string;
+    dynamicImgLimit: number;
     push: Push;
     pushCheckInterval: number;
     pushIgnoreForwardingSelf: boolean;
@@ -251,6 +292,7 @@ declare interface Setu {
     sendPximgProxies: any[];
     shortenPximgProxy: string;
     size1200: boolean;
+    excludeAI: boolean;
     deleteTime: number;
     cd: number;
     limit: number;

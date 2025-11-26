@@ -108,7 +108,14 @@ const majorFormatters = {
 
 const formatDynamic = async (item, forPush = false) => {
   const { module_author: author, module_dynamic: dynamic } = item.modules;
-  const lines = [`https://t.bilibili.com/${item.id_str}`, `UP：${CQ.escape(author.name)}`];
+  const { dynamicLinkPosition } = global.config.bot.bilibili;
+
+  const link = `https://t.bilibili.com/${item.id_str}`;
+  const lines = [`UP：${CQ.escape(author.name)}`];
+
+  if (dynamicLinkPosition !== 'append' && dynamicLinkPosition !== 'none') {
+    lines.unshift(link);
+  }
 
   const desc = dynamic?.desc?.text?.trim();
   if (desc) lines.push('', CQ.escape(purgeLinkInText(desc)));
@@ -131,6 +138,10 @@ const formatDynamic = async (item, forPush = false) => {
     }
   }
 
+  if (dynamicLinkPosition === 'append') {
+    lines.push('', link);
+  }
+
   return lines;
 };
 
@@ -144,7 +155,7 @@ export const getDynamicInfoFromItem = async (item, forPush = false) => {
   };
 };
 
-export const getDynamicInfo = async (id, forPush = false) => {
+export const getDynamicInfo = async (id) => {
   try {
     const { cookie } = global.config.bot.bilibili;
     const {

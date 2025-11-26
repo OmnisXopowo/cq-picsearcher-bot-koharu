@@ -10,16 +10,16 @@ import asyncMap from './asyncMap.mjs';
 import Axios from './axiosProxy.mjs';
 import { createCache, getCache } from './cache.mjs';
 import CQ from './CQcode.mjs';
-import { imgAntiShielding } from './imgAntiShielding.mjs';
+import { imgAntiShielding, imgAntiShieldingFromArrayBuffer } from './imgAntiShielding.mjs';
 import logError from './logError.mjs';
 import { retryAsync, retryGet } from './retry.mjs';
 
 const imageSizeAsync = promisify(imageSize);
 
-export const getCqImg64FromUrl = async (url, type = undefined, cf = false) => {
+export const getCqImg64FromUrl = async (url, type = undefined) => {
   try {
     const base64 = await retryAsync(
-      () => (cf ? Axios.cfGetBase64 : Axios.getBase64)(url),
+      () => Axios.getBase64(url),
       3,
       e => e.code === 'ECONNRESET',
     );
@@ -31,15 +31,14 @@ export const getCqImg64FromUrl = async (url, type = undefined, cf = false) => {
   return '';
 };
 
-export const getAntiShieldedCqImg64FromUrl = async (url, mode, type = undefined, cf = false) => {
+export const getAntiShieldedCqImg64FromUrl = async (url, mode, type = undefined) => {
   try {
     const arrayBuffer = await retryAsync(
-      () => (cf ? Axios.cfGet : Axios.get)(url, { responseType: 'arraybuffer' }).then(r => r.data),
+      () => Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data),
       3,
       e => e.code === 'ECONNRESET',
     );
-    const img = await Jimp.read(Buffer.from(arrayBuffer));
-    const base64 = await imgAntiShielding(img, mode);
+    const base64 = await imgAntiShieldingFromArrayBuffer(arrayBuffer, mode);
     return CQ.img64(base64, type);
   } catch (e) {
     logError('[error] getAntiShieldedCqImg64FromUrl');
@@ -78,6 +77,8 @@ export const dlImgToCacheBuffer = async (url, config = {}, limit = false) => {
   return buffer;
 };
 
+const MAX_MERGE_SIZE = 2048;
+
 /**
  * @param {string[]} paths
  */
@@ -106,8 +107,8 @@ const check9ImgCanMerge = async paths => {
         ({ width, height, type }) =>
           type !== 'gif' &&
           height === sizes[0].height &&
-          width <= 800 &&
-          height <= 800 &&
+          width <= MAX_MERGE_SIZE &&
+          height <= MAX_MERGE_SIZE &&
           Math.abs(width - height) / height < 0.15,
       );
       if (!check) return result;
@@ -196,6 +197,108 @@ export const checkImageHWRatio = async (url, max) => {
     return true;
   }
 };
+
+export const getUniversalImgURL = (url = '') => {
+  if (/^https?:\/\/(c2cpicdw|gchat)\.qpic\.cn\/(offpic|gchatpic)_new\//.test(url)) {
+    return url
+      .replace('/c2cpicdw.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
+      .replace('/gchat.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
+      .replace(/\/\d+\/+\d+-\d+-/, '/0/0-0-')
+      .replace(/\?.*$/, '');
+  }
+  return url;
+};
+
+export class MsgImage {
+  /**
+   * @param {CQ} cq
+   */
+  constructor(cq) {
+    this.cq = cq;
+    this.file = cq.data.get('file');
+    this.url = getUniversalImgURL(cq.data.get('url') || this.file);
+    /** @type {string|undefined} */
+    this.path = undefined;
+    this.key = cq.data.get('file_unique') || this.file;
+  }
+
+  get isUrlValid() {
+    return typeof this.url === 'string' && /^https?:\/\/[^&]+\//.test(this.url);
+  }
+
+  /**
+   * @returns {Promise<string|undefined>}
+   */
+  async getPath() {
+    if (this.path) return this.path;
+    try {
+      this.path = (await global.bot('get_image', { file: this.file })).data.file;
+      return this.path;
+    } catch (error) {
+      console.error('[MsgImage] getImage error', this.file);
+      console.error(error);
+    }
+  }
+
+  async getImageSize() {
+    const path = await this.getPath();
+    if (path) return imageSize(path);
+    if (this.isUrlValid) return await imageSizeAsync(this.url);
+    throw new Error(`[MsgImage] invalid image ${this.url}`);
+  }
+
+  /**
+   * @param {number} max
+   */
+  async checkImageHWRatio(max) {
+    try {
+      const { width, height } = await this.getImageSize();
+      return height / width < max;
+    } catch (error) {
+      console.error('[MsgImage] checkImageHWRatio error');
+      console.error(error);
+      return true;
+    }
+  }
+
+  /**
+   * @returns {Jimp}
+   */
+  async getJimp() {
+    const path = await this.getPath();
+    if (path) return Jimp.read(path);
+    if (this.isUrlValid) {
+      const arrayBuffer = await retryAsync(
+        () => Axios.get(this.url, { responseType: 'arraybuffer' }).then(r => r.data),
+        3,
+        e => e.code === 'ECONNRESET',
+      );
+      return await Jimp.read(Buffer.from(arrayBuffer));
+    }
+    throw new Error('[MsgImage] getJimp no available image');
+  }
+
+  /**
+   * @param {number} mode
+   * @param {string} [type]
+   */
+  async getAntiShieldedCqImg64(mode, type = undefined) {
+    try {
+      const img = await this.getJimp();
+      const base64 = await imgAntiShielding(img, mode);
+      return CQ.img64(base64, type);
+    } catch (e) {
+      logError('[MsgImage] getAntiShieldedCqImg64 error');
+      logError(e);
+    }
+    return '';
+  }
+
+  toCQ() {
+    // fix Lagrange ssl issue #467
+    return this.cq.toString().replace('file=https://multimedia.nt.qq.com.cn/', 'file=http://multimedia.nt.qq.com.cn/');
+  }
+}
 
 /*
 * 旋转图片

@@ -37,6 +37,8 @@
     "addFriendAnswers": [],
     // 是否自动同意入群申请（false 则忽略，但不会拒绝，并且可以用命令手动允许，详情请查看“wiki-配置文件说明”）
     "autoAddGroup": false,
+    // 在发送的@后面加上空格，如果客户端没有这么做并且你想加空格则可以开启
+    "spaceAfterAt": false,
     // 图片反和谐方式，0：关闭，1：轻微修改，2：逆时针旋转90°，4：顺时针旋转90°，8：旋转180°
     // 可以进行组合，例如 3 则表示 轻微修改 + 逆时针旋转90° (1+2)；旋转操作之间不能组合，只会执行一个
     "antiShielding": 0,
@@ -58,25 +60,33 @@
     "hideImgWhenWhatanimeR18": false,
     // whatanime 发送预览视频，R18 结果不会发送
     "whatanimeSendVideo": false,
+    // 是否优先从本地上传图片到 whatanime 搜索（否时使用 whatanime 的 URL API）
+    "whatanimeLocalUpload": false,
     // saucenao 默认搜索库，可选值：["all", "pixiv", "danbooru", "doujin", "anime"]
     "saucenaoDefaultDB": "all",
     // saucenao 相似度低于这个百分比将被认定为相似度过低
     "saucenaoLowAcc": 60,
+    // 是否优先从本地上传图片到 saucenao 搜索（否时使用 saucenao 的 URL API）
+    "saucenaoLocalUpload": false,
     // 是否在 saucenao 超额时自动换用 ascii2d
-    "useAscii2dWhenQuotaExcess": true,
+    "useAscii2dWhenQuotaExcess": false,
     // 是否在 saucenao 相似度过低时自动使用 ascii2d
-    "useAscii2dWhenLowAcc": true,
+    "useAscii2dWhenLowAcc": false,
     // 是否在 saucenao 搜索失败时自动使用 ascii2d
-    "useAscii2dWhenFailed": true,
-    // 是否从本地上传图片到 ascii2d 搜索（否时使用 ascii2d 的 URL API）
+    "useAscii2dWhenFailed": false,
+    // 是否优先从本地上传图片到 ascii2d 搜索（否时使用 ascii2d 的 URL API）
     "ascii2dLocalUpload": false,
-    // 是否使用 Puppeteer 请求 ascii2d 以绕过 cf js challenge，详情请看“wiki-配置文件说明-使用 Puppeteer 绕过 cf js challenge”（启用时 ascii2dLocalUpload 配置将不生效）
+    // 是否使用 Puppeteer 请求 ascii2d 以绕过 cf js challenge，启用时 `ascii2dLocalUpload` 不生效，详情请看“wiki-配置文件说明-使用 Puppeteer 绕过 cf js challenge”
+    // 不再建议使用，建议使用 FlareSolverr，见设置项 `flaresolverr`
     "ascii2dUsePuppeteer": false,
     // saucenao 搜到本子时是否进一步去 nHentai 搜索
     "getDoujinDetailFromNhentai": true,
-    // nHentai 主站有 cf js challenge 无法直接搜索，可以配置使用镜像站搜索，但需注意镜像站收录本子的进度通常落后于主站，设置空字符串则去主站搜索
-    "getDoujinDetailFromNhentaiMirrorSite": "https://nhentai.xxx",
+    // 若 nHentai 主站有 cf js challenge 无法直接搜索，可以配置使用镜像站搜索，如 https://nhentai.xxx
+    // 但需注意镜像站收录本子的进度通常落后于主站，设置空字符串则去主站搜索
+    // 不再建议使用，建议使用 FlareSolverr，见设置项 `flaresolverr`
+    "getDoujinDetailFromNhentaiMirrorSite": "",
     // 是否使用 Puppeteer 请求 nHentai 以绕过 cf js challenge，试验阶段，目前可能不解决问题，使用 getDoujinDetailFromNhentaiMirrorSite 时该配置不生效，详情请看“wiki-配置文件说明-使用 Puppeteer 绕过 cf js challenge”
+    // 不再建议使用，建议使用 FlareSolverr，见设置项 `flaresolverr`
     "nHentaiUsePuppeteer": false,
     // 是否开启搜图反馈，成功接收图片会回复 bot.replys.searchFeedback，可用于判断图片是否被屏蔽
     "searchFeedback": false,
@@ -95,8 +105,6 @@
     "groupForwardSearchResult": true,
     // 大部分请求所使用的代理，支持 http(s):// 和 socks://
     "proxy": "",
-    // 绕过 Cloudflare Challenge 所使用的 TLS 版本，建议可选值：["TLSv1.1", "TLSv1.2"]，作用详见 wiki (常见问题 - Ascii2d)
-    "cfTLSVersion": "TLSv1.2",
     // 检查更新间隔（小时），0 则关闭
     "checkUpdate": 24,
     // 是否忽略QQ官方机器人 (2854196300 ≤ qq ≤ 2854216399)
@@ -163,6 +171,8 @@
       "shortenPximgProxy": "",
       // 是否发送 master1200 大小的图片，以节省流量或加快发送速度，关闭时将发送原图
       "size1200": false,
+      // 是否排除AI作品
+      "excludeAI": false,
       // 发送后这么多秒自动撤回（0 则不撤回，-1 为发送闪照）
       "deleteTime": 0,
       // 群内使用冷却时间（秒），每名用户独立，0 则无冷却，私聊无 cd
@@ -292,10 +302,14 @@
       "getLiveRoomInfo": false,
       // 是否在发送动态时预下载图片（如网络环境不佳，启用该项可能可以解决发图发一半或动图不动情况）
       "dynamicImgPreDl": false,
-      // 自动合并3/6/9宫格图（需要先启用 dynamicImgPreDl ）
+      // 自动合并3/6/9宫格图（需要先启用 dynamicImgPreDl）
       "dynamicMergeImgs": false,
       // 图片预下载超时时间（秒），0 则无超时（不建议，小心永久卡住）
       "imgPreDlTimeout": 30,
+      // 动态链接位置，prepend: 前置，append: 后置，none: 不发送
+      "dynamicLinkPosition": "prepend",
+      // 动态图片数量限制，-1 为无限制，0 则不发送，其他值则最多发送这么多图片，图片数量超出限制时 dynamicMergeImgs 将失效
+      "dynamicImgLimit": -1,
       // 动态和直播开播推送，请查看“wiki-附加功能-哔哩哔哩推送”以了解更多
       // 特别地，该配置项内部的注释不会被清除，以方便对 uid 或 gid 进行备注
       "push": {},
@@ -447,11 +461,37 @@
       "whiteGroup": []
     }
   },
-  // saucenao 自定义 host，格式：[protocol://]host[:port]
+  // https://github.com/FlareSolverr/FlareSolverr
+  "flaresolverr": {
+    // API 地址
+    "url": "http://127.0.0.1:8191",
+    // 会话名，用于持久化，为空则不使用，不建议为空
+    "session": "cqps",
+    // 代理，见 FlareSolverr 文档；注意：请求缩略图会使用 `bot.proxy` 代理而不是这个代理
+    "proxy": null,
+    // 若你需要修改代理，请改为 `true`，FlareSolverr 需要重新创建 session 才能使用新的代理配置
+    "autoDestroySession": false,
+    // 为 ascii2d 请求使用，启用时 `ascii2dLocalUpload` 不生效
+    "enableForAscii2d": false,
+    // 为 nHentai 请求使用
+    "enableForNHentai": false
+  },
+  // 开启后每天会备份所有群的群成员信息到 data/groupMemberBackup 目录，若意外炸群可用于秽土转生，备份只会保留近 30 天的
+  "backupGroupMember": {
+    // 是否开启
+    "enable": false,
+    // 备份格式，可选值 ["csv", "json"]，csv 可直接用 excel 查看或导入腾讯文档之类的在线文档
+    "format": "csv",
+    // 白名单：设置后将仅备份这些群，优先于黑名单，数字或字符串均可
+    "whitelist": [],
+    // 黑名单：设置后将排除这些群，数字或字符串均可
+    "blacklist": []
+  },
+  // saucenao 自定义 host，格式：[protocol://]host[:port]，不写明协议默认为 https
   "saucenaoHost": "saucenao.com",
   // saucenao APIKEY，必填，否则无法使用 saucenao 搜图
   "saucenaoApiKey": "",
-  // whatanime 自定义 host，格式：[protocol://]host[:port]
+  // whatanime 自定义 host，格式：[protocol://]host[:port]，不写明协议默认为 https
   "whatanimeHost": "api.trace.moe",
   // whatanime Token，选填
   "whatanimeToken": "",

@@ -50,6 +50,10 @@ const noCheckPaths = new Set([
   'bot.characterglm.additionParams',
   'bot.characterglm.overrides',
   'bot.characterglm.meta',
+  'flaresolverr.proxy',
+    'bot.chatgpt.prependMessages',
+  'bot.chatgpt.additionParams',
+  'bot.chatgpt.overrides',
 ]);
 
 function recursiveCopy(c, dc, cc, dcc, parentPath = '') {

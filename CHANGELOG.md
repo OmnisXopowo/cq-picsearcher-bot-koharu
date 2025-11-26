@@ -3,83 +3,72 @@
 =======
 # 更新日志
 
-## 2024
+## 2025
 
-### 07-20 v3.17.5
+### 10-04 v3.22.0
 
-- 修复B站动态解析无法发送含有图片的动态的问题 [#468](../../issues/468)
-
-### 07-20 v3.17.4
-
-- B站动态推送支持过滤转发自己的动态
-- 修复可能出现的 `multimedia.nt.qq.com.cn` SSL 问题 [#467](../../issues/467)
-- 修复 ascii2d 缩略图无法下载的问题
+- B站视频链接解析分P
+- 增加群成员备份功能，需手动启用，将每天备份群列表和群成员列表，意外炸群时可用于秽土转生
 - 配置项变更
-  - A `bot.bilibili.pushIgnoreForwardingSelf`
+  - A `backupGroupMember`
 
-### 05-24 v3.17.3
+### 10-02 v3.21.3
 
-- 修复腾讯云 OCR 错误的问题
-- OCR 支持失败时使用其他 OCR 服务
-- B站动态解析支持 `m.bilibili.com/opus`
+- 启用 `flaresolverr.enableForNHentai` 并使用原站搜本子时会错误的问题
+
+### 10-02 v3.21.2
+
+- 默认不销毁 FlareSolverr session
+- 修复搜索本子时无法下载封面图的问题 [#494](../../issues/494)
 - 配置项变更
-  - A `bot.ocr.fallback`
-  - A `bot.akhr.ocrFallback`
+  - A `flaresolverr.autoDestroySession`
 
-### 05-20 v3.17.2
+### 10-01 v3.21.1
 
-- 修复开启 `bot.ascii2dLocalUpload` 时搜索错误的问题
+- 修复模块导入问题
 
-### 05-17 v3.17.1
+### 10-01 v3.21.0
 
-- 修复使用 Lagrange 时无法正确缓存搜图结果的问题 [#465](../../issues/465)
-
-### 05-14 v3.17.0
-
-- 修复哔哩哔哩动态推送过滤抽奖失效的问题
-- 可禁止搜索过长图片 [#462](../../issues/462)
+- 方舟公招计职业 tag 没有显示干员两个字
+- 增大九宫图合并图片长宽上限
+- 支持使用 [FlareSolverr](https://github.com/FlareSolverr/FlareSolverr) 解决 ascii2d 或 nHentai 的 cf challenge [#493](../../issues/493)
+- 移除 `bot.cfTLSVersion` 配置及相关能力
 - 配置项变更
-  - A `bot.stopSearchingHWRatioGt`
-  - A `bot.replys.stopSearchingByHWRatio`
+  - A `flaresolverr`
+  - M `bot.getDoujinDetailFromNhentaiMirrorSite` 默认值 `"https://nhentai.xxx"` -> `""`
+  - D `bot.cfTLSVersion`
 
-### 04-22 v3.16.7
+### 06-08 v3.20.2
 
-- 修复消息上报格式为数组时回复搜图无法使用的问题
+- 修复方舟公招计算漏掉了职业 tag 的问题
 
-### 04-14 v3.16.6
+### 06-08 v3.20.1
 
-- 哔哩哔哩动态推送视频去除播放量和弹幕数据（没用）
+- 方舟公招计算使用森空岛官方数据
 
-### 04-13 v3.16.5
+### 05-03 v3.20.0
 
-- 哔哩哔哩长文动态增加全文链接
-- 修复 LLOneBot 图片链接 [#455](../../issues/455)
-- 改进哔哩哔哩动态宫格图合并逻辑
+- 自定义 ChatGPT API 地址支持 override [#481](../../issues/481)
+- 修复搜图缓存
+- 更换 GitHub 反代地址，修复获取更新日志和下载方舟公招数据失败的问题
+- 语言库支持回复和自定义正则 flag [#487](../../issues/487) [#488](../../issues/488)
 
-### 02-21 v3.16.4
+### 02-15 v3.19.4
 
-- 修复无法解析哔哩哔哩专栏链接的问题（需要提供 cookie）
-
-### 02-18 v3.16.3
-
-- 修复无法获取 Lagrange.Core 接收到的图片的问题 [#454](../../issues/454)
+- 允许自定义 ChatGPT API 地址 [#481](../../issues/481)
 - 配置项变更
-  - M `bot.cfTLSVersion` 默认值 `TLSv1.1` -> `TLSv1.2`
+  - A `bot.chatgpt.customAPI`
+  - A `bot.chatgpt.customChatAPI`
 
-### 01-17 v3.16.2
+### 02-14 v3.19.3
 
-- docker 换用 node 镜像
-
-### 01-12 v3.16.1
-
-- 修复 docker 构建
-
-### 01-12 v3.16.0
-
-- 哔哩哔哩解析现在会使用 `bot.bilibili.cookie`，如果出现 `-352` 错误可以尝试提供 cookie
-- 哔哩哔哩解析增加自动合并3/6/9宫格图的功能，可选开启，实验性，有误判可能
+- setu 增加排除AI作品选项 [#480](../../issues/480)
 - 配置项变更
-  - A `bot.bilibili.dynamicMergeImgs`
+  - A `bot.setu.excludeAI`
+
+### 01-25 v3.19.2
+
+- 修复B站直播链接解析错误问题
 
 ## 2023
 

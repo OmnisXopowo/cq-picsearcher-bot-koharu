@@ -24,18 +24,20 @@ import { loadConfig } from './setup/config.mjs';
 import { globalReg } from './setup/global.mjs';
 import psycho from './setup/psycho.mjs';
 import asyncMap from './utils/asyncMap.mjs';
+import { botClientInfo } from './utils/botClientInfo.mjs';
 import { execUpdate } from './utils/checkUpdate.mjs';
 import CQ from './utils/CQcode.mjs';
 import dailyCountInstance from './utils/dailyCount.mjs';
 import emitter from './utils/emitter.mjs';
 import { IS_DOCKER } from './utils/env.mjs';
-import { checkImageHWRatio, getAntiShieldedCqImg64FromUrl } from './utils/image.mjs';
+import { MsgImage } from './utils/image.mjs';
 import logError from './utils/logError.mjs';
 import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
 import { setKeyValue, getKeyValue, getKeyObject, setKeyObject } from './utils/redisClient.mjs';
+import { getRegWithCache } from './utils/regCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 
 
@@ -50,6 +52,16 @@ const rand = RandomSeed.create();
 // 全局变量
 globalReg({
   bot,
+  botClientInfo: {
+    name: '',
+    version: '',
+  },
+  botReady: async () => {
+    if (bot.isReady()) return;
+    return new Promise(resolve => {
+      bot.once('ready', resolve);
+    });
+  },
   replyMsg,
   sendMsg2Admin,
   parseArgs,
@@ -147,9 +159,23 @@ bot
   .on('socket.connect', (wsType, sock, attempts) => {
     console.log(`连接成功[${wsType}]#${attempts}`);
     if (wsType === '/api') {
-      setTimeout(() => {
-        sendMsg2Admin(`已上线#${attempts}`);
-      }, 1000);
+      bot('get_version_info')
+        .then(({ retcode, data, message }) => {
+          if (retcode !== 0 || !data) {
+            console.error('获取客户端信息失败', message);
+            return;
+          }
+
+          console.log('客户端', data.app_name, data.app_version);
+          console.log('协议版本', data.protocol_version);
+
+          botClientInfo.setInfo({
+            name: data.app_name || '',
+            version: data.app_version || '',
+          });
+        })
+        .catch(console.error);
+      sendMsg2Admin(`已上线#${attempts}`);
     }
   });
 
@@ -282,7 +308,7 @@ async function commonHandle(e, context) {
   if (corpus(context)) return true;
 
   // 忽略指定正则的发言
-  if (config.regs.ignore && new RegExp(config.regs.ignore).test(context.message)) return true;
+  if (config.regs.ignore && getRegWithCache(config.regs, 'ignore').test(context.message)) return true;
 
   // 处理ehentai选择结果
   if (/^\d+$/.test(context.message)) {
@@ -564,9 +590,7 @@ async function privateAndAtMsg(e, context) {
             return;
           }
           const imgs = getImgs(getRawMessage(data));
-          const rMsg = imgs
-            .map(({ file, url }) => `[CQ:image,file=${CQ.escape(file, true)},url=${CQ.escape(url, true)}]`)
-            .join('');
+          const rMsg = imgs.map(img => img.toCQ()).join('');
           context = { ...context, message: context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, rMsg) };
         } else {
           // 获取不到原消息，忽略
@@ -574,7 +598,7 @@ async function privateAndAtMsg(e, context) {
           return;
         }
       }
-    } catch (error) {
+    } catch {
       if (global.config.bot.debug) {
         console.log(error);
       }
@@ -639,7 +663,7 @@ async function groupMsg(e, context) {
   // 进入或退出搜图模式
   const { group_id, user_id } = context;
 
-  if (new RegExp(global.config.bot.regs.searchModeOn).test(context.message)) {
+  if (getRegWithCache(global.config.bot.regs, 'searchModeOn').test(context.message)) {
     // 进入搜图
     e.stopPropagation();
     if (
@@ -649,7 +673,7 @@ async function groupMsg(e, context) {
     ) {
       replyMsg(context, global.config.bot.replys.searchModeOn, true);
     } else replyMsg(context, global.config.bot.replys.searchModeAlreadyOn, true);
-  } else if (new RegExp(global.config.bot.regs.searchModeOff).test(context.message)) {
+  } else if (getRegWithCache(global.config.bot.regs, 'searchModeOff').test(context.message)) {
     e.stopPropagation();
     // 退出搜图
     if (logger.smSwitch(group_id, user_id, false)) replyMsg(context, global.config.bot.replys.searchModeOff, true);
@@ -770,17 +794,15 @@ async function searchImg(context, customDB = -1) {
   const msg = context.message;
   const imgs = getImgs(msg);
 
-  const incorrectImgs = _.remove(imgs, ({ url }) => !/^https?:\/\/[^&]+\//.test(url));
-  if (incorrectImgs.length) {
-    if (global.config.bot.debug) console.warn('incorrect images:', incorrectImgs);
-    replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
-  }
-
   if (!imgs.length) return;
 
   // 获取图片链接
   if (/(^|\s|\])链接($|\s|\[)/.test(context.message) || args['get-url']) {
-    replyMsg(context, _.map(imgs, 'url').join('\n'));
+    const validImgs = imgs.filter(img => img.isUrlValid);
+    if (validImgs.length !== imgs.length) {
+      replyMsg(context, '部分图片无法获取有效链接，请尝试使用其他设备QQ发送', false, true);
+    }
+    replyMsg(context, _.map(validImgs, 'url').join('\n'));
     return;
   }
 
@@ -795,8 +817,7 @@ async function searchImg(context, customDB = -1) {
       if (cache) {
         const msgs = cache.map(msg => `${CQ.escape('[缓存]')} ${msg}`);
         const antiShieldingMode = global.config.bot.antiShielding;
-        const cqImg =
-          antiShieldingMode > 0 ? await getAntiShieldedCqImg64FromUrl(img.url, antiShieldingMode) : CQ.img(img.file);
+        const cqImg = antiShieldingMode > 0 ? await img.getAntiShieldedCqImg64(antiShieldingMode) : img.toCQ();
         await replySearchMsgs(context, msgs, [cqImg]);
         continue;
       }
@@ -811,7 +832,7 @@ async function searchImg(context, customDB = -1) {
     // 检查图片比例
     if (
       global.config.bot.stopSearchingHWRatioGt > 0 &&
-      !(await checkImageHWRatio(img.url, global.config.bot.stopSearchingHWRatioGt))
+      !(await img.checkImageHWRatio(global.config.bot.stopSearchingHWRatioGt))
     ) {
       replyMsg(context, global.config.bot.replys.stopSearchingByHWRatio, false, true);
       return;
@@ -839,7 +860,7 @@ async function searchImg(context, customDB = -1) {
 
     // saucenao
     if (!useAscii2d) {
-      const snRes = await saucenao(img.url, db, args.debug || global.config.bot.debug);
+      const snRes = await saucenao(img, db, args.debug || global.config.bot.debug);
       if (!snRes.success) success = false;
       if (snRes.success) hasSucc = true;
       if (snRes.lowAcc) snLowAcc = true;
@@ -879,10 +900,11 @@ async function searchImg(context, customDB = -1) {
 
     // ascii2d
     if (useAscii2d) {
-      const { color, bovw, success: asSuc, asErr } = await ascii2d(img.url, snLowAcc).catch(asErr => ({ asErr }));
+      const { color, bovw, success: asSuc, asErr } = await ascii2d(img, snLowAcc).catch(asErr => ({ asErr }));
       if (asErr) {
         success = false;
         const errMsg =
+          (typeof asErr === 'string' && asErr) ||
           (asErr.response && asErr.response.data.length < 100 && `\n${asErr.response.data}`) ||
           (asErr.message && `\n${asErr.message}`) ||
           '';
@@ -899,7 +921,7 @@ async function searchImg(context, customDB = -1) {
 
     // 搜番
     if (useWhatAnime) {
-      const waRet = await whatanime(img.url, args.debug || global.config.bot.debug);
+      const waRet = await whatanime(img, args.debug || global.config.bot.debug);
       if (waRet.success) hasSucc = true;
       if (!waRet.success) success = false; // 如果搜番有误也视作不成功
       await replier.reply(...waRet.msgs);
@@ -942,7 +964,7 @@ function doOCR(context) {
  * 从消息中提取图片
  *
  * @param {string} msg
- * @returns {Array<{ file: string; url: string; }>} 图片URL数组
+ * @returns {MsgImage[]} 图片URL数组
  */
 export function getImgs(msg) {
   if (Array.isArray(msg)) {
@@ -1216,17 +1238,6 @@ function debugMsgDeleteBase64Content(msg) {
   return msg.replace(/base64:\/\/[a-z\d+/=]+/gi, '(base64)');
 }
 
-function getUniversalImgURL(url = '') {
-  if (/^https?:\/\/(c2cpicdw|gchat)\.qpic\.cn\/(offpic|gchatpic)_new\//.test(url)) {
-    return url
-      .replace('/c2cpicdw.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
-      .replace('/gchat.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
-      .replace(/\/\d+\/+\d+-\d+-/, '/0/0-0-')
-      .replace(/\?.*$/, '');
-  }
-  return url;
-}
-
 function isSendByAdmin(ctx) {
   return ctx.message_type === 'guild'
     ? ctx.user_id === global.config.bot.adminTinyId
@@ -1240,7 +1251,7 @@ function handleOriginImgConvert(ctx) {
 }
 
 function originImgConvert(ctx) {
-  const cqImgs = CQ.from(ctx.message).filter(cq => cq.type === 'image');
-  const imgs = cqImgs.map(cq => CQ.img(cq.get('url')));
-  replyMsg(ctx, imgs.map(str => CQ.unescape(str)).join(''), false, false);
+  const imgs = getImgs(ctx.message);
+  const lines = imgs.map(img => (img.isUrlValid ? img.url : '获取原图链接失败'));
+  replyMsg(ctx, lines.join('\n'), false, false);
 }
