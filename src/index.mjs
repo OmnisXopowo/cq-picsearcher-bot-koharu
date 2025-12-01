@@ -30,7 +30,7 @@ import CQ from './utils/CQcode.mjs';
 import dailyCountInstance from './utils/dailyCount.mjs';
 import emitter from './utils/emitter.mjs';
 import { IS_DOCKER } from './utils/env.mjs';
-import { MsgImage } from './utils/image.mjs';
+import {MsgImage  } from './utils/image.mjs';
 import logError from './utils/logError.mjs';
 import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
@@ -967,22 +967,8 @@ function doOCR(context) {
  * @returns {MsgImage[]} 图片URL数组
  */
 export function getImgs(msg) {
-  if (Array.isArray(msg)) {
-    const cqImgs = msg.filter(item => item.type === 'image');
-    return cqImgs.map(item => {
-      return {
-        file: item.data.file,
-        url: getUniversalImgURL(item.data.url || item.data.file)
-      };
-    });
-  } else {
-    const cqImgs = CQ.from(msg).filter(cq => cq.type === 'image');
-    return cqImgs.map(cq => {
-      const data = cq.pickData(['file', 'url']);
-      data.url = getUniversalImgURL(data.url || data.file);
-      return data;
-    });
-  }
+  const cqImgs = CQ.from(msg).filter(cq => cq.type === 'image');
+  return cqImgs.map(cq => new MsgImage(cq));
 }
 
 /**

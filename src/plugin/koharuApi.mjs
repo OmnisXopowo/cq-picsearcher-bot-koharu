@@ -761,7 +761,7 @@ export async function ArchivedImg(context) {
 
         let useIqdb = false;
 
-        const snRes = await saucenao(img.url, snDB.来源, false, true);
+        const snRes = await saucenao(img, snDB.来源, false, true);
 
             if (!snRes.success || snRes.lowAcc) {
             useIqdb = true;
@@ -943,10 +943,10 @@ function replyEhentaiRatingMsg(url, context, msg) {
             if (msgRet && msgRet.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3); // 缓存三天过期
             } else {
-                console.error('回复缓存 - replyEhentaiRatingMsg 返回:', msgRet);
+                console.error('回复replyEhentaiRatingMsg 返回:', msgRet);
             }
         }).catch(err => {
-            console.error('回复缓存 - replyEhentaiRatingMsg 错误:', err);
+            console.error('回复replyEhentaiRatingMsg 错误:', err);
         });
 }
 
@@ -957,10 +957,10 @@ function replyNhentaiRatingMsg(gid, context, msg) {
             if (msgRet && msgRet.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3); // 缓存三天过期
             } else {
-                console.error('回复缓存 - replyNhentaiRatingMsg 返回:', msgRet);
+                console.error('回复replyNhentaiRatingMsg 返回:', msgRet);
             }
         }).catch(err => {
-            console.error('回复缓存 - replyNhentaiRatingMsg 错误:', err);
+            console.error('回复replyNhentaiRatingMsg 错误:', err);
         });
 }
 
@@ -996,11 +996,11 @@ function replyPixivRatingMsg(illustId, context, msg) {
             if (msgRet?.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
             } else {
-                console.error('回复缓存 - replyPixivRatingMsg 返回:', msgRet);
+                console.error('回复replyPixivRatingMsg 返回:', msgRet);
             }
         })
         .catch(err => {
-            console.error('回复缓存 - replyPixivRatingMsg 错误:', err);
+            console.error('回复replyPixivRatingMsg 错误:', err);
         });
 }
 
@@ -1018,11 +1018,11 @@ function replyDanbooruRatingMsg(illustId, context, msg, reply = true) {
             if (msgRet?.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
             } else {
-                console.error('回复缓存 - replyDanbooruRatingMsg 返回:', msgRet);
+                console.error('回复replyDanbooruRatingMsg 返回:', msgRet);
             }
         })
         .catch(err => {
-            console.error('回复缓存 - replyDanbooruRatingMsg 错误:', err);
+            console.error('回复replyDanbooruRatingMsg 错误:', err);
         });
 }
 
@@ -1183,8 +1183,19 @@ class DanbooruData {
  */
 async function downloadImage(url, context, useProxy = true) {
     try {
+        let targetUrl = url;
+        
+        // 如果是 Pixiv 图片且需要使用代理，则转换为代理 URL
+        if (useProxy && /^https?:\/\/i\.pximg\.net\//.test(url)) {
+            const proxyUrl = getSetuUrl(proxy, url);
+            if (proxyUrl) {
+                targetUrl = proxyUrl;
+                console.log(`图片下载 - Pixiv URL 代理转换: ${url.substring(0, 60)}... -> ${targetUrl.substring(0, 60)}...`);
+            }
+        }
+        
         // 使用统一的 axios 封装下载（封装会在需要时回退到 5001）
-        const response = await axios.download(url, { useProxy });
+        const response = await axios.download(targetUrl, { useProxy });
         const filepath = createCache(url, Buffer.from(response.data));
         return CQ.img(filepath);
     } catch (error) {

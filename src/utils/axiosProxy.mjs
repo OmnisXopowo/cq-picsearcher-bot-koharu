@@ -30,7 +30,6 @@ let client = {};
 emitter.onConfigLoad(() => {
   const { proxy } = global.config.bot;
   client = createAxios(getAgent(proxy), CHROME_UA);
-  cfClient = createAxios(getTlsVersionAgent(proxy, cfTLSVersion), POSTMAN_UA);
 });
 
 /**

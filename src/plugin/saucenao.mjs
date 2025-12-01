@@ -32,7 +32,7 @@ const snDB = {
  * @param {boolean} [withoutThumbnail=false] 是否不显示缩略图
  * @returns Promise 返回消息、返回提示
  */
-async function doSearch(imgURL, db, debug = false, withoutThumbnail = false) {
+async function doSearch(img, db, debug = false, withoutThumbnail = false) {
   const hosts = global.config.saucenaoHost;
   const apiKeys = global.config.saucenaoApiKey;
   const index = hostsI++;
