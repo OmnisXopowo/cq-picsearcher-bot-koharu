@@ -63,15 +63,10 @@ async function requestWithFallback(method, instance, url, data, config) {
     // 仅当目标是本地生产地址且为网络错误（无 HTTP 响应）时尝试回退到 5001
     const isNetworkError = !err || !err.response;
     if (isLocalProd(url) && isNetworkError) {
-      try {
-        const fallbackUrl = url.replace(':5000', ':5001');
-        if (method === 'get') return await instance.get(fallbackUrl, config);
-        if (method === 'post') return await instance.post(fallbackUrl, data, config);
-      } catch (err2) {
-        // 如果回退也失败，则抛出包含回退失败信息的原始错误，便于排查
-        err.message = `${err && err.message ? err.message : String(err)}; fallback to 127.0.0.1:5001 failed: ${err2 && err2.message ? err2.message : String(err2)}`;
-        throw err;
-      }
+      // 静默切换到 5001，如果 5001 也失败则直接抛出 5001 的错误
+      const fallbackUrl = url.replace(':5000', ':5001');
+      if (method === 'get') return await instance.get(fallbackUrl, config);
+      if (method === 'post') return await instance.post(fallbackUrl, data, config);
     }
     // 非本地生产地址或不是网络错误，不触发回退，直接抛出原始错误
     throw err;

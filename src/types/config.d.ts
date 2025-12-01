@@ -70,7 +70,6 @@ declare interface Bot {
     privateForwardSearchResult: boolean;
     groupForwardSearchResult: boolean;
     proxy: string;
-    checkUpdate: number;
     ignoreOfficialBot: boolean;
     canvasLibrary: string;
     disableMessageEscape: boolean;

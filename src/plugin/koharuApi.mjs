@@ -103,7 +103,7 @@ async function illustAddEhentai(url, context) {
         });
         return response.data;
     } catch (error) {
-    console.error('收藏 - EHentai 添加失败:', error);
+        console.error('收藏 - EHentai 添加失败:', error);
         throw error;
     }
 }
@@ -117,7 +117,7 @@ async function illustAddNhentai(gid, context) {
         });
         return response.data;
     } catch (error) {
-    console.error('收藏 - NHentai 添加失败:', error);
+        console.error('收藏 - NHentai 添加失败:', error);
         throw error;
     }
 }
@@ -129,7 +129,7 @@ async function getIllustRanking(mode = 'day', date = null) {
         });
         return response.data;
     } catch (error) {
-    console.error('书库 - 排行获取失败:', error);
+        console.error('书库 - 排行获取失败:', error);
         throw error; // 将错误向上抛出，以便可以在调用处处理
     }
 }
@@ -185,7 +185,7 @@ export function illustRating(illustObj, context, rate) {
                 , false, true);
         }
     }).catch(error => {
-    console.error('书库 - 评分失败:', error);
+        console.error('书库 - 评分失败:', error);
         if (!error.response) {
             global.replyMsg(context, `书库暂时维护中，已加入缓存`, false, true);
         }
@@ -221,7 +221,7 @@ export function illustRemove(illustObj, context) {
             global.replyMsg(context, result.data.message, false, true);
         }
     }).catch(error => {
-    console.error('书库 - 移除失败:', error);
+        console.error('书库 - 移除失败:', error);
         if (!error.response) {
             global.replyMsg(context, `书库暂时维护中，已加入缓存`, false, true);
         }
@@ -371,7 +371,7 @@ export async function getCommon(context) {
                             try {
                                 const Rvhost = global.config.reverseProxy;
                                 const url = `${Rvhost}/${illust.large_file_url}`;
-                                
+
                                 try {
                                     const imgCQ = await downloadImage(url, context, true);
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
@@ -398,7 +398,7 @@ export async function getCommon(context) {
             }
         }
     }).catch(error => {
-    console.error('搜索 - commonSearch 发送消息失败：', error);
+        console.error('搜索 - commonSearch 发送消息失败：', error);
         if (!error.response) {
             global.replyMsg(context, `书库暂时维护中`, false, true);
         }
@@ -427,7 +427,7 @@ export async function pushDoujinshi(context) {
     }
 
     try {
-    console.log('推本 - 搜索关键词:', keyword);
+        console.log('推本 - 搜索关键词:', keyword);
 
         // 调用新的API接口
         const response = await axios.post('http://127.0.0.1:5000/api/Ehentai/search-and-add', {
@@ -531,7 +531,7 @@ export async function pushDoujinshi(context) {
             global.replyMsg(context, result.message || '操作完成，但返回了未知结果', false, true);
         }
     } catch (error) {
-    console.error('推本 - 功能出错:', error);
+        console.error('推本 - 功能出错:', error);
         if (error.response && error.response.data && error.response.data.message) {
             global.replyMsg(context, `推本失败: ${error.response.data.message}`, false, true);
         } else {
@@ -552,7 +552,7 @@ export async function pushDoujinshi(context) {
 export async function handleEhentaiSelect(link, context) {
     try {
         const response = await axios.post('http://127.0.0.1:5000/api/Ehentai/ehentaiAdd', {
-            url:link,
+            url: link,
             group: context.group_id ?? 0,
             user: context.user_id
         });
@@ -564,26 +564,26 @@ export async function handleEhentaiSelect(link, context) {
             // 根据返回的 gallery 数据构建消息
             const gallery = result.gallery || {};
             let msg = result.message || '收藏成功';
-            
+
             if (gallery.title) {
                 msg += `\n标题：${gallery.title}`;
             }
-            
+
             if (gallery.rating !== undefined) {
                 msg += `\n评分：${gallery.rating}⭐`;
             }
-            
+
             if (gallery.pageCount) {
                 msg += `\n页数：${gallery.pageCount}P`;
             }
 
             msg += `\n链接：${link}`;
-            
+
             global.replyMsg(context, msg, false, true);
         }
         return true;
     } catch (error) {
-    console.error('收藏 - EhentaiSelect 添加画廊失败:', error);
+        console.error('收藏 - EhentaiSelect 添加画廊失败:', error);
         if (error.response && error.response.data && error.response.data.message) {
             global.replyMsg(context, `添加失败: ${error.response.data.message}`, false, true);
         } else {
@@ -668,8 +668,8 @@ function replyLimitedReply(context) {
                 }
             })
             .catch(error => {
-                    console.error('声音回复 - limitedReply 获取语音文件失败:', error);
-                });
+                console.error('声音回复 - limitedReply 获取语音文件失败:', error);
+            });
     }
 }
 
@@ -686,7 +686,7 @@ async function handleTagsAndPlayVoice(tags, context) {
     };
 
     try {
-    console.log('标签处理 - 处理并播放语音，tags:', tags);
+        console.log('标签处理 - 处理并播放语音，tags:', tags);
         // 确保 tags 是数组格式
         let tagArray;
         if (typeof tags === 'string') {
@@ -723,7 +723,7 @@ async function handleTagsAndPlayVoice(tags, context) {
             }
         }
     } catch (error) {
-    console.error('标签处理 - 处理并播放语音出错:', error);
+        console.error('标签处理 - 处理并播放语音出错:', error);
     }
 }
 
@@ -738,17 +738,17 @@ export async function ArchivedImg(context) {
     // 得到图片链接并搜图
     const msg = context.message;
     const imgs = getImgs(msg);
-    
+
     const incorrectImgs = _.remove(imgs, ({ url }) => !/^https?:\/\/[^&]+\//.test(url));
     if (incorrectImgs.length) {
-    if (global.config.bot.debug) console.warn('图片存档 - 非法图片列表:', incorrectImgs);
+        if (global.config.bot.debug) console.warn('图片存档 - 非法图片列表:', incorrectImgs);
         global.replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
     }
 
     if (!imgs.length) return;
 
     for (const img of imgs) {
-    console.log('图片存档 - 开始收藏:', img.url);
+        console.log('图片存档 - 开始收藏:', img.url);
 
         // 检查图片比例
         if (
@@ -763,7 +763,7 @@ export async function ArchivedImg(context) {
 
         const snRes = await saucenao(img, snDB.来源, false, true);
 
-            if (!snRes.success || snRes.lowAcc) {
+        if (!snRes.success || snRes.lowAcc) {
             useIqdb = true;
             console.log('图片存档 - SauceNAO 低相似度:', snRes.msg);
         } else {
@@ -775,11 +775,11 @@ export async function ArchivedImg(context) {
         // iqdb
         if (useIqdb) {
             const { ReturnMsg, success: iqdbSuc, isLowAcc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
-                if (asErr) {
+            if (asErr) {
                 console.error('图片存档 - IQDB 错误:', asErr);
                 logError(asErr);
             } else {
-                const cleanMsg = ReturnMsg.replace(/base64:\/\/[^"]+/, 'base64://[image_data]');
+                const cleanMsg = ReturnMsg.replace(/base64:\/\/[^\]]+/, 'base64://[image_data]');
 
                 if (iqdbSuc && !isLowAcc) {
                     // Iqdb搜索成功且相似度高，输出结果到控制台
@@ -851,23 +851,24 @@ export default async (context) => {
                     // 仅在分级不确定时补充判定
                     if (result.rating === 'e') {
                         global.replyMsg(context, '是限制级？？ 不可以涩涩！ 死刑！', false, true);
-                    } else if (result.large_file_url) {
+                    } else if (result.large_file_url || result.file_url) {
+                        const imageUrl = result.large_file_url || result.file_url;
                         try {
                             // 检查URL是否为Pixiv URL（不是donmai.us域名）
-                            if (!result.large_file_url.startsWith('https://cdn.donmai.us/')) {
-                                let imgUrl = result.large_file_url;
-                                
+                            if (!imageUrl.startsWith('https://cdn.donmai.us/')) {
+                                let imgUrl = imageUrl;
+
                                 // 使用getSetuUrl处理Pixiv URL
                                 if (setting.sendPximgProxies.length) {
-                                    for (const imgProxy of setting.sendPximgProxies) {
-                                        const path = new URL(result.large_file_url).pathname.replace(/^\//, '');
+                                        for (const imgProxy of setting.sendPximgProxies) {
+                                            const path = new URL(imageUrl).pathname.replace(/^\//, '');
                                         if (!/{{.+}}/.test(imgProxy)) {
                                             imgUrl = new URL(path, imgProxy).href;
                                             break; // 使用第一个匹配的代理
                                         }
                                     }
                                 }
-                                
+
                                 try {
                                     const imgCQ = await downloadImage(imgUrl, context, true);
                                     texts.push(imgCQ);
@@ -875,15 +876,15 @@ export default async (context) => {
                                 } catch (error) {
                                     // 如果使用代理失败，则尝试不使用代理直接请求
                                     console.warn('图片下载 - 代理 失败，尝试直接请求:', error.message);
-                                    const imgCQ = await downloadImage(result.large_file_url, context, false);
+                                    const imgCQ = await downloadImage(imageUrl, context, false);
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 }
                             } else {
                                 // 处理Danbooru CDN图片
                                 const Rvhost = global.config.reverseProxy;
-                                const url = `${Rvhost}/${result.large_file_url}`;
-                                
+                                const url = `${Rvhost}/${imageUrl}`;
+
                                 try {
                                     const imgCQ = await downloadImage(url, context, true);
                                     texts.push(imgCQ);
@@ -891,14 +892,23 @@ export default async (context) => {
                                 } catch (error) {
                                     // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求
                                     console.warn('图片下载 - Rvhost 失败，尝试直接请求:', error.message);
-                                    const imgCQ = await downloadImage(result.large_file_url, context, false);
+                                    const imgCQ = await downloadImage(imageUrl, context, false);
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 }
                             }
                             replyCollectReply(context, result);
+                            } catch (e) {
+                                console.error('投稿 - 处理出错:', e);
+                            }
+                    } else {
+                        // large_file_url/文件地址缺失，可能因Danbooru Gold权限不足导致无法展示图片
+                        try {
+                            texts.push('（已收藏）');
+                            replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                            replyCollectReply(context, result);
                         } catch (e) {
-                            console.error('投稿 - 处理出错:', e);
+                            console.error('投稿 - 处理缺图权限出错:', e);
                         }
                     }
                 }
@@ -1184,7 +1194,7 @@ class DanbooruData {
 async function downloadImage(url, context, useProxy = true) {
     try {
         let targetUrl = url;
-        
+
         // 如果是 Pixiv 图片且需要使用代理，则转换为代理 URL
         if (useProxy && /^https?:\/\/i\.pximg\.net\//.test(url)) {
             const proxyUrl = getSetuUrl(proxy, url);
@@ -1193,7 +1203,7 @@ async function downloadImage(url, context, useProxy = true) {
                 console.log(`图片下载 - Pixiv URL 代理转换: ${url.substring(0, 60)}... -> ${targetUrl.substring(0, 60)}...`);
             }
         }
-        
+
         // 使用统一的 axios 封装下载（封装会在需要时回退到 5001）
         const response = await axios.download(targetUrl, { useProxy });
         const filepath = createCache(url, Buffer.from(response.data));

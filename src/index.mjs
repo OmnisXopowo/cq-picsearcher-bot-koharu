@@ -25,7 +25,6 @@ import { globalReg } from './setup/global.mjs';
 import psycho from './setup/psycho.mjs';
 import asyncMap from './utils/asyncMap.mjs';
 import { botClientInfo } from './utils/botClientInfo.mjs';
-import { execUpdate } from './utils/checkUpdate.mjs';
 import CQ from './utils/CQcode.mjs';
 import dailyCountInstance from './utils/dailyCount.mjs';
 import emitter from './utils/emitter.mjs';
@@ -487,13 +486,6 @@ function handleAdminMsg(context) {
 
   // 停止程序（使用 pm2 时相当于重启）
   if (args.shutdown) process.exit();
-
-  // 更新程序
-  if (args['update-cqps']) {
-    if (IS_DOCKER) replyMsg(context, 'Docker 部署不支持一键更新');
-    else replyMsg(context, '开始更新，完成后会重新启动').then(execUpdate);
-    return true;
-  }
 
   // 重载配置
   if (args.reload) {
