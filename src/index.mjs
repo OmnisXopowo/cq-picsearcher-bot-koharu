@@ -366,18 +366,18 @@ async function commonHandle(e, context) {
   }
 
   // 收藏入书库
-  if (context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/收藏") || context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/post")) {
+  if (config.KoharuAPI && (context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/收藏") || context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').startsWith("/post"))) {
     if (await koharuApi(context)) return true;
   }
 
   // 处理/推本或/tb命令
-  if (context.message.startsWith('/推本') || context.message.startsWith('/tb')) {
+  if (config.KoharuAPI && (context.message.startsWith('/推本') || context.message.startsWith('/tb'))) {
     if (await pushDoujinshi(context)) return true;
   }
 
 
   // 来点
-  if (context.message.startsWith("/来点")) {
+  if (config.KoharuAPI && context.message.startsWith("/来点")) {
     if (await getCommon(context)) return true;
   }
 

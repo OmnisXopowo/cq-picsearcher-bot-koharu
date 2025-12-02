@@ -881,12 +881,10 @@ export default async (context) => {
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 }
                             } else {
-                                // 处理Danbooru CDN图片
-                                const Rvhost = global.config.reverseProxy;
-                                const url = `${Rvhost}/${imageUrl}`;
+
 
                                 try {
-                                    const imgCQ = await downloadImage(url, context, true);
+                                    const imgCQ = await downloadImage(imageUrl, context, true);
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 } catch (error) {

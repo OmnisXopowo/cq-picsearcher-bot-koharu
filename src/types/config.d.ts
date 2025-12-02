@@ -31,6 +31,7 @@ declare interface Flaresolverr {
 declare interface Bot {
     debug: boolean;
     AImode: boolean;
+    KoharuAPI: boolean;
     admin: number;
     adminTinyId: string;
     whiteGroup: Set<number | string>;

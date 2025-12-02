@@ -19,6 +19,8 @@
     "debug": false,
     // AI模式，启动后只会响应AI对话
     "AImode": false,
+    // 是否启用koharu api功能（/收藏、/推本、/来点）
+    "KoharuAPI": false,
     // 管理者QQ，请务必设置
     "admin": 0,
     // 管理者频道 tinyId
