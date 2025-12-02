@@ -239,7 +239,7 @@ async function commonHandle(e, context) {
   }
 
   // 反哔哩哔哩小程序 
-  if (await bilibiliHandler(context)) return true;
+  if (context.user_id != 3766461635 && await bilibiliHandler(context)) return true;
 
   return false;
 }
@@ -608,7 +608,7 @@ async function searchImg(context, customDB = -1) {
     if (psCache.enable && !args.purge) {
       const cache = psCache.get(img, db);
       if (cache) {
-        const msgs = cache.map(msg => `${CQ.escape('[缓存]')} ${msg}`);
+        const msgs = cache.map(msg => `${CQ.escape(' ')} ${msg}`);
         const antiShieldingMode = global.config.bot.antiShielding;
         const cqImg =
           antiShieldingMode > 0 ? await getAntiShieldedCqImg64FromUrl(img.url, antiShieldingMode) : CQ.img(img.file);
@@ -676,6 +676,7 @@ async function searchImg(context, customDB = -1) {
     if (useIqdb) {
       const { ReturnMsg, success: iqdbSuc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
       if (asErr) {
+        
         success = false;
         const errMsg =
           (asErr.response && asErr.response.data.length < 100 && `\n${asErr.response.data}`) ||
