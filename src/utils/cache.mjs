@@ -11,7 +11,14 @@ const DAY_MS = 24 * 3600 * 1000;
 const CACHE_DIR = resolve(__dirname, '../../data/cache');
 
 export const createCache = (key, data) => {
-  const filename = md5(key);
+  let filename = md5(key);
+  const regex = /\.[a-zA-Z0-9]+$/;
+  const match = filename.match(regex);
+  if(!match){
+    const ext = key.match(regex);
+    filename +=`.${ext[0].substring(1).toLowerCase()}`;
+  }
+
   const filepath = resolve(CACHE_DIR, filename);
   Fs.ensureDirSync(CACHE_DIR);
   Fs.writeFileSync(filepath, data instanceof Buffer ? data : Buffer.from(data));

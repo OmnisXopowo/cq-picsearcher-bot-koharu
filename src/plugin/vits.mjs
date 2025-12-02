@@ -4,14 +4,13 @@ import escapeStringRegexp from 'escape-string-regexp';
 import { size } from 'lodash-es';
 import urlJoin from 'url-join';
 import CQ from '../utils/CQcode.mjs';
-import { DailyCount } from '../utils/dailyCount.mjs';
+import  dailyCountInstance  from '../utils/dailyCount.mjs';
 import emitter from '../utils/emitter.mjs';
 import logError from '../utils/logError.mjs';
 import { useKVStore } from '../utils/store.mjs';
 
 const MAX_VITS_LIST = 50;
 
-const dailyCount = new DailyCount();
 const defaultVoice = useKVStore('vitsDefaultVoice');
 
 /** @type {Record<string, RegExp>} */
@@ -55,10 +54,10 @@ export default async context => {
   }
 
   if (config.userDailyLimit) {
-    if (dailyCount.get(context.user_id) >= config.userDailyLimit) {
+    if (dailyCountInstance.get(context.user_id) >= config.userDailyLimit) {
       global.replyMsg(context, '今天玩的够多啦，明天再来吧！', false, true);
       return true;
-    } else dailyCount.add(context.user_id);
+    } else dailyCountInstance.add(context.user_id);
   }
 
   await initVoiceMap();

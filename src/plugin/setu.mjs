@@ -11,7 +11,7 @@ import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
 
 const API_URLs = [lolicon, lolisuki, yuban10703];
-//const API_URLs = [lolicon];
+// const API_URLs = [lolicon];
 const PIXIV_404 = Symbol('Pixiv image 404');
 
 async function lolicon(r18, keyword) {
@@ -35,13 +35,13 @@ async function lolisuki(r18, keyword) {
   if (result.status == 404) {
     result.data = {};
     result.data.data = [];
-    return result
+    return result;
   }
 
   result.data.data[0].urls.regular = result.data.data[0].urls.large;
   result.data.data[0].p = result.data.data[0].page;
   result.data.error = result.data.detail;
-  result.data.data[0].pid = result.data.data[0].artwork.id
+  result.data.data[0].pid = result.data.data[0].artwork.id;
   return result;
 }
 
@@ -50,7 +50,7 @@ async function dlImgAndAntiShielding(url) {
   const setting = global.config.bot.setu;
   const proxy = setting.pximgProxy.trim();
   const img = await Jimp.read(
-    proxy ? Buffer.from(await Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data)) : url
+    proxy ? Buffer.from(await Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data)) : url,
   );
   return await imgAntiShielding(img, global.config.bot.setu.antiShielding);
 }
@@ -64,7 +64,7 @@ async function getAntiShieldingBase64(url, fallbackUrl) {
   try {
     const origBase64 = await dlImgAndAntiShielding(url);
     if (checkBase64RealSize(origBase64)) return origBase64;
-  } catch (error) {
+  } catch {
     // 原图过大
   }
   if (!fallbackUrl) return;
@@ -134,7 +134,7 @@ function sendSetu(context, reply = true) {
   let ret;
   async function getapi(){
     try {
-      for (let api of API_URLs) {
+      for (const api of API_URLs) {
         await api(r18, keyword).then(result => ret = result.data)
         .catch(e => {
           console.error('[error] setu API出错');
@@ -247,11 +247,8 @@ function getSetuUrlByTemplate(tpl, setu, url) {
 
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
-    let j = Math.floor(Math.random() * (i + 1)); // 从 0 到 i 的随机索引
+    const j = Math.floor(Math.random() * (i + 1)); // 从 0 到 i 的随机索引
     [array[i], array[j]] = [array[j], array[i]];
   }
 }
-
-
-
 

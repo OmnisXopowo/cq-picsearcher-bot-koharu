@@ -1,15 +1,14 @@
 import { inspect } from 'util';
 import { pick } from 'lodash-es';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
-import { DailyCount } from '../../utils/dailyCount.mjs';
+import dailyCountInstance from '../../utils/dailyCount.mjs';
 import emitter from '../../utils/emitter.mjs';
 import { retryAsync } from '../../utils/retry.mjs';
-import { getglmContent, insertglmContent, deleteglmContent, createJWT } from './auth.mjs'
+import { getglmContent, insertglmContent, deleteglmContent, createJWT } from './auth.mjs';
 
-const dailyCount = new DailyCount();
 let overrideGroups = [];
-const Modelcharacterglm = {model:'charglm-3',api:'https://open.bigmodel.cn/api/paas/v4/chat/completions'};
-const Modelemohaa = {model:'emohaa',api:'https://open.bigmodel.cn/api/paas/v4/chat/completions'};
+const Modelcharacterglm = { model: 'charglm-4', api: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' };
+const Modelemohaa = { model: 'emohaa', api: 'https://open.bigmodel.cn/api/paas/v4/chat/completions' };
 
 emitter.onConfigLoad(() => {
   overrideGroups = global.config.bot.characterglm.overrides.map(({ blackGroup, whiteGroup }) => {
@@ -22,7 +21,7 @@ emitter.onConfigLoad(() => {
 
 const getMatchAndConfig = text => {
   const globalConfig = global.config.bot.characterglm;
-  let choosedModel = Modelcharacterglm;
+  const choosedModel = Modelcharacterglm;
   let match;
   if (text.startsWith(globalConfig.nickname)) {
     match = text.replace(globalConfig.nickname, "");
@@ -32,20 +31,6 @@ const getMatchAndConfig = text => {
   }
   else if (text.includes(globalConfig.meta.bot_name)) {
     match = text;
-  }
-
-  if (text.startsWith('noa')) {
-    match = text.replace('noa', "");
-    choosedModel=Modelemohaa;
-  }
-  else if (text.includes('noa')) {
-    match = text.replace('noa', globalConfig.meta.bot_name);
-    choosedModel=Modelemohaa;
-  }
-  else if (text.includes(globalConfig.meta.bot_name)) {
-    match = text;    
-    choosedModel=Modelemohaa;
-
   }
 
   return {
@@ -67,8 +52,8 @@ const getMatchAndConfig = text => {
 };
 
 
-const callCharacterAPI = (prompt, config, context,choosedModel) => {
-  //群单例，群聊模式
+const callCharacterAPI = (prompt, config, context, choosedModel) => {
+  // 群单例，群聊模式
   const singleton = true;
 
 
@@ -78,20 +63,19 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
 
     const MaxSize = 20;
 
-    if (prompt == "--r") {
+    if (prompt === "--r") {
       deleteglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model);
-      return '已清空上下文'
+      return '已清空上下文';
     }
 
-    let content = getglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model)
+    const content = getglmContent(context.group_id, singleton ? '0' : context.user_id, choosedModel.model);
 
     content.choices.push({ role: 'user', content: prompt });
 
 
 
     const param = {
-      meta: config.meta,
-      model:choosedModel.model,
+      model: choosedModel.model,
       messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
@@ -101,6 +85,8 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
 
     if (content.request_id) {
       param.request_id = content.request_id;
+    } else {
+      param.messages.unshift({ role: 'system', content: config.meta.bot_info });
     }
 
     const jwttoken = createJWT(config.apiKey);
@@ -128,37 +114,38 @@ const callCharacterAPI = (prompt, config, context,choosedModel) => {
 
     if (data.choices) {
 
-      const choiceResponses = data.choices[0]
-      if(choiceResponses.finish_reason.startsWith('stop')){
+      const choiceResponses = data.choices[0];
+      if (choiceResponses.finish_reason.startsWith('stop')) {
 
-      returnMessage = choiceResponses.message.content.replace(/(\"*)(\\n*)/g, '').trim();
+        returnMessage = choiceResponses.message.content.replace(/(\"*)(\\n*)/g, '').trim();
 
-      content.choices.push(choiceResponses.message);
+        content.choices.push(choiceResponses.message);
 
-            if(content.choices.length <=MaxSize ){
-      content.choices.shift()
-    }
+        if (content.choices.length <= MaxSize) {
+          content.choices.shift();
+        }
 
-      insertglmContent(context.group_id,
-        singleton ? '0' : context.user_id,
-        content.choices,
-        data.request_id,
-        choosedModel.model);
+        insertglmContent(context.group_id,
+          singleton ? '0' : context.user_id,
+          content.choices,
+          data.request_id,
+          choosedModel.model);
 
-      return returnMessage;
+        return returnMessage;
       }
     }
 
     console.log(`${choosedModel.model} unexpected response:`, data);
     return 'ERROR3: 无回答';
   })
-  .catch(e => {
-    `ERROR2: ${e.message}`;
-    console.log(`${modelName} ERROR2:`, e);
-  });};
+    .catch(e => {
+      `ERROR2: ${e.message}`;
+      console.log(`${modelName} ERROR2:`, e);
+    });
+};
 
 export default async context => {
-  const { match, choosedModel,config } = getMatchAndConfig(context.message);
+  const { match, choosedModel, config } = getMatchAndConfig(context.message);
   if (!match) return false;
 
   if (context.group_id) {
@@ -177,15 +164,15 @@ export default async context => {
 
   const { userDailyLimit } = global.config.bot.characterglm;
   if (userDailyLimit) {
-    if (dailyCount.get(context.user_id) >= userDailyLimit) {
+    if (dailyCountInstance.get(context.user_id) >= userDailyLimit) {
       global.replyMsg(context, '今天玩的够多啦，明天再来吧！', false, true);
       return true;
-    } else dailyCount.add(context.user_id);
+    } else dailyCountInstance.add(context.user_id);
   }
 
   if (global.config.bot.debug) console.log('[characterglm] prompt:', prompt);
 
-  const completion = await callCharacterAPI(prompt, config, context,choosedModel);
+  const completion = await callCharacterAPI(prompt, config, context, choosedModel);
 
   global.replyMsg(context, completion, false, true);
 

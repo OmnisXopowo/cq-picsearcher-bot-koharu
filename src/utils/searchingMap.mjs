@@ -1,8 +1,6 @@
 import _ from 'lodash-es';
-import CQ from './CQcode.mjs';
-import { getAntiShieldedCqImg64FromUrl } from './image.mjs';
 
-const getKey = (img, db) => `${img.file}.${db}`;
+const getKey = (img, db) => `${img.key || img.file}.${db}`;
 
 const CTX_COMPARE_KEY = {
   private: 'user_id',
@@ -36,6 +34,19 @@ class SearchingMap extends Map {
     return ctxs.push(ctx) > 1 ? PUT_RETURN.NOT_FIRST : PUT_RETURN.IS_FIRST;
   }
 
+  /**
+   * 获取回复处理器
+   * @param {Object} img - 图片对象
+   * @param {Object} db - 数据库对象
+   * @returns {Object} 包含 reply 和 end 方法的回复处理器对象
+   *   - reply: 异步方法,用于发送消息
+   *   - end: 异步方法,用于结束会话并清理资源
+   * @throws {Error} 当找不到上下文时抛出错误
+   * @description
+   * 创建一个回复处理器,用于处理搜图结果的回复。
+   * 支持群组转发和私聊转发功能,可配置防屏蔽模式。
+   * 会根据配置自动处理消息的发送方式。
+   */
   getReplier(img, db) {
     const key = getKey(img, db);
     const ctxs = super.get(key);
@@ -67,14 +78,13 @@ class SearchingMap extends Map {
         mainPromises.push(promise);
         return promise;
       },
-      end: async ({ file, url }) => {
+      end: async img => {
         await Promise.all(mainPromises);
         super.delete(key);
 
         const restCtxs = needGroupForward ? ctxs : _.tail(ctxs);
         const antiShieldingMode = global.config.bot.antiShielding;
-        const cqImg =
-          antiShieldingMode > 0 ? await getAntiShieldedCqImg64FromUrl(url, antiShieldingMode) : CQ.img(file);
+        const cqImg = antiShieldingMode > 0 ? await img.getAntiShieldedCqImg64(antiShieldingMode) : img.toCQ();
 
         for (const ctx of restCtxs) {
           try {
@@ -84,7 +94,7 @@ class SearchingMap extends Map {
               pmSearchResult,
               pmSearchResultTemp,
             });
-          } catch (e) {}
+          } catch {}
         }
       },
     };

@@ -2,11 +2,30 @@ export declare interface Config {
     autoUpdateConfig: boolean;
     cqws: Cqw;
     bot: Bot;
+    flaresolverr: Flaresolverr;
+    backupGroupMember: BackupGroupMember;
     saucenaoHost: string;
     saucenaoApiKey: string;
     whatanimeHost: string;
     whatanimeToken: string;
     ascii2dHost: string;
+    reverseProxy: string;
+}
+
+declare interface BackupGroupMember {
+    enable: boolean;
+    format: string;
+    whitelist: any[];
+    blacklist: any[];
+}
+
+declare interface Flaresolverr {
+    url: string;
+    session: string;
+    proxy: object;
+    autoDestroySession: boolean;
+    enableForAscii2d: boolean;
+    enableForNHentai: boolean;
 }
 
 declare interface Bot {
@@ -21,6 +40,7 @@ declare interface Bot {
     autoAddFriend: boolean;
     addFriendAnswers: any[];
     autoAddGroup: boolean;
+    spaceAfterAt: boolean;
     antiShielding: number;
     handleBannedHosts: boolean;
     handleBannedHostsWithLegacyMethod: boolean;
@@ -30,8 +50,10 @@ declare interface Bot {
     hideImgWhenLowAcc: boolean;
     hideImgWhenWhatanimeR18: boolean;
     whatanimeSendVideo: boolean;
+    whatanimeLocalUpload: boolean;
     saucenaoDefaultDB: string;
     saucenaoLowAcc: number;
+    saucenaoLocalUpload: boolean;
     useAscii2dWhenQuotaExcess: boolean;
     useAscii2dWhenLowAcc: boolean;
     useAscii2dWhenFailed: boolean;
@@ -48,8 +70,6 @@ declare interface Bot {
     privateForwardSearchResult: boolean;
     groupForwardSearchResult: boolean;
     proxy: string;
-    cfTLSVersion: string;
-    checkUpdate: number;
     ignoreOfficialBot: boolean;
     canvasLibrary: string;
     disableMessageEscape: boolean;
@@ -65,6 +85,7 @@ declare interface Bot {
     bilibili: Bilibili;
     corpus: any[];
     characterglm: CharacterGLM;
+    tarotReader: tarotReader;
     glm4: glm4;
     tongyixingchen:tongyixingchen;
     like: Like;
@@ -90,6 +111,23 @@ declare interface Like {
     adminDailyLike: number;
 }
 
+declare interface Chatgpt {
+    enable: boolean;
+    regexp: string;
+    model: string;
+    useChatAPI: boolean;
+    maxTokens: number;
+    prependMessages: any[];
+    additionParams: AdditionParam;
+    apiKey: string;
+    organization: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
+    customAPI: string;
+    customChatAPI: string;
+}
 declare interface CharacterGLM {
     enable: boolean;
     nickname: string;
@@ -105,6 +143,20 @@ declare interface CharacterGLM {
         user_info: string,
         user_name: string;
     }
+}
+
+declare interface tarotReader {
+    enable: boolean;
+    regexDivination:String;
+    regexFortune:String;
+    prependMessages: [{ role: string, content: string }];
+    apiKey: string;
+    userDailyLimit: number;
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    overrides: any[];
+    customAPI: string;
+    customChatAPI: string;
 }
 
 declare interface glm4 {
@@ -143,6 +195,8 @@ declare interface Bilibili {
     dynamicImgPreDl: boolean;
     dynamicMergeImgs: boolean;
     imgPreDlTimeout: number;
+    dynamicLinkPosition: string;
+    dynamicImgLimit: number;
     push: Push;
     pushCheckInterval: number;
     pushIgnoreForwardingSelf: boolean;
@@ -237,6 +291,7 @@ declare interface Setu {
     sendPximgProxies: any[];
     shortenPximgProxy: string;
     size1200: boolean;
+    excludeAI: boolean;
     deleteTime: number;
     cd: number;
     limit: number;
@@ -286,4 +341,61 @@ declare interface Cqw {
     reconnection: boolean;
     reconnectionAttempts: number;
     reconnectionDelay: number;
+}
+
+export interface PixivIllustDetail {
+    id:                     number;
+    title:                  string;
+    type:                   string;
+    image_urls:             ImageUrls;
+    caption:                string;
+    restrict:               number;
+    user:                   User;
+    tags:                   Tag[];
+    tools:                  string[];
+    create_date:            Date;
+    page_count:             number;
+    width:                  number;
+    height:                 number;
+    sanity_level:           number;
+    x_restrict:             number;
+    series:                 null;
+    meta_single_page:       MetaSinglePage;
+    meta_pages:             any[];
+    total_view:             number;
+    total_bookmarks:        number;
+    is_bookmarked:          boolean;
+    visible:                boolean;
+    is_muted:               boolean;
+    total_comments:         number;
+    illust_ai_type:         number;
+    illust_book_style:      number;
+    comment_access_control: number;
+}
+
+export interface ImageUrls {
+    square_medium: string;
+    medium:        string;
+    large:         string;
+}
+
+export interface MetaSinglePage {
+    original_image_url: string;
+}
+
+export interface Tag {
+    name:            string;
+    translated_name: null | string;
+}
+
+export interface User {
+    id:                 number;
+    name:               string;
+    account:            string;
+    profile_image_urls: ProfileImageUrls;
+    is_followed:        boolean;
+}
+
+export interface ProfileImageUrls {
+    medium: string;
 }

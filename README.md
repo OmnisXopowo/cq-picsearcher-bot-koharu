@@ -1,12 +1,12 @@
 # cq-picsearcher-bot
 
 [![Docker Pulls](https://img.shields.io/docker/pulls/tsuk1ko/cq-picsearcher-bot?style=flat-square)](https://hub.docker.com/r/tsuk1ko/cq-picsearcher-bot)
-[![Docker Image Version](https://img.shields.io/docker/v/tsuk1ko/cq-picsearcher-bot?style=flat-square)](https://hub.docker.com/r/tsuk1ko/cq-picsearcher-bot)
+[![Docker Image Version](https://img.shields.io/docker/v/tsuk1ko/cq-picsearcher-bot?style=flat-square&sort=semver)](https://hub.docker.com/r/tsuk1ko/cq-picsearcher-bot)
 [![Docker Image Size](https://img.shields.io/docker/image-size/tsuk1ko/cq-picsearcher-bot/latest?style=flat-square)](https://hub.docker.com/r/tsuk1ko/cq-picsearcher-bot)
 
 这是一个以 Node.js 编写的酷Q机器人程序，用于搜图、搜番、搜本子，并夹带了许多娱乐向功能（。）
 
-本项目可以连接支持 [OneBot 11](https://github.com/botuniverse/onebot-11) 标准的机器人客户端，本分支专注于 [OpenShamrock](https://github.com/whitechi73/OpenShamrock) 的连接
+本项目可以连接支持 [OneBot 11](https://github.com/botuniverse/onebot-11) 标准的机器人客户端
 
 目前支持的搜图服务：
 
@@ -38,4 +38,5 @@
 - [node-cq-websocket](https://github.com/momocow/node-cq-websocket)
 - [酷Q](https://cqp.cc) (R.I.P.)
 - [go-cqhttp](https://github.com/Mrs4s/go-cqhttp)
-- [OpenShamrock](https://github.com/whitechi73/OpenShamrock)
+- [OpenShamrock](https://github.com/whitechi73/OpenShamrock) (R.I.P.)
+- [NapCatQQ](https://github.com/NapNeko/NapCatQQ)

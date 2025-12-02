@@ -1,12 +1,11 @@
 import { inspect } from 'util';
 import { pick } from 'lodash-es';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
-import { DailyCount } from '../../utils/dailyCount.mjs';
+import  dailyCountInstance  from '../../utils/dailyCount.mjs';
 import emitter from '../../utils/emitter.mjs';
 import { retryAsync } from '../../utils/retry.mjs';
 import { getxingchenContent, insertxingchenContent, deletexingchenContent, createJWT } from './auth.mjs'
 
-const dailyCount = new DailyCount();
 let overrideGroups = [];
 
 
@@ -175,10 +174,10 @@ export default async context => {
 
   const { userDailyLimit } = global.config.bot.characterglm;
   if (userDailyLimit) {
-    if (dailyCount.get(context.user_id) >= userDailyLimit) {
+    if (dailyCountInstance.get(context.user_id) >= userDailyLimit) {
       global.replyMsg(context, '今天玩的够多啦，明天再来吧！', false, true);
       return true;
-    } else dailyCount.add(context.user_id);
+    } else dailyCountInstance.add(context.user_id);
   }
 
   if (global.config.bot.debug) console.log('[characterglm] prompt:', prompt);

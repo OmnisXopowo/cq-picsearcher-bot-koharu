@@ -41,6 +41,8 @@ const arrayToSetPaths = new Set([
   'bot.tongyixingchen.whiteGroup',
   'bot.vits.blackGroup',
   'bot.vits.whiteGroup',
+  'bot.tarotReader.blackGroup',
+  'bot.tarotReader.whiteGroup',
 ]);
 const noCheckPaths = new Set([
   'bot.bilibili.push',
@@ -48,6 +50,10 @@ const noCheckPaths = new Set([
   'bot.characterglm.additionParams',
   'bot.characterglm.overrides',
   'bot.characterglm.meta',
+  'flaresolverr.proxy',
+    'bot.chatgpt.prependMessages',
+  'bot.chatgpt.additionParams',
+  'bot.chatgpt.overrides',
 ]);
 
 function recursiveCopy(c, dc, cc, dcc, parentPath = '') {
@@ -96,6 +102,7 @@ function loadJSON(path) {
     throw msg;
   }
 }
+
 
 export function loadConfig(init = false) {
   const conf = loadJSON(CONFIG_PATH);
