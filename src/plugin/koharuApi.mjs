@@ -370,10 +370,11 @@ export async function getCommon(context) {
                         if (illust.large_file_url.startsWith('https://cdn.donmai.us/')) {
                             try {
                                 const Rvhost = global.config.reverseProxy;
-                                const url = `${Rvhost}/${illust.large_file_url}`;
+                                // 如果 reverseProxy 为空，则直接使用原始 URL
+                                const url = Rvhost ? `${Rvhost}/${illust.large_file_url}` : illust.large_file_url;
 
                                 try {
-                                    const imgCQ = await downloadImage(url, context, true);
+                                    const imgCQ = await downloadImage(url, context, !!Rvhost);
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
                                 } catch (error) {
                                     // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求
@@ -860,8 +861,8 @@ export default async (context) => {
 
                                 // 使用getSetuUrl处理Pixiv URL
                                 if (setting.sendPximgProxies.length) {
-                                        for (const imgProxy of setting.sendPximgProxies) {
-                                            const path = new URL(imageUrl).pathname.replace(/^\//, '');
+                                    for (const imgProxy of setting.sendPximgProxies) {
+                                        const path = new URL(imageUrl).pathname.replace(/^\//, '');
                                         if (!/{{.+}}/.test(imgProxy)) {
                                             imgUrl = new URL(path, imgProxy).href;
                                             break; // 使用第一个匹配的代理
@@ -870,7 +871,10 @@ export default async (context) => {
                                 }
 
                                 try {
-                                    const imgCQ = await downloadImage(imgUrl, context, true);
+                                    const Rvhost = global.config.reverseProxy;
+                                    // 如果 reverseProxy 为空，则直接使用原始 URL
+                                    const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
+                                    const imgCQ = await downloadImage(url, context, !!Rvhost);
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 } catch (error) {
@@ -896,9 +900,9 @@ export default async (context) => {
                                 }
                             }
                             replyCollectReply(context, result);
-                            } catch (e) {
-                                console.error('投稿 - 处理出错:', e);
-                            }
+                        } catch (e) {
+                            console.error('投稿 - 处理出错:', e);
+                        }
                     } else {
                         // large_file_url/文件地址缺失，可能因Danbooru Gold权限不足导致无法展示图片
                         try {
