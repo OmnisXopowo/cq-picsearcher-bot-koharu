@@ -96,7 +96,7 @@ export async function getContextFromUrl(context) {
 // 异步方法添加E-Hentai作品信息
 async function illustAddEhentai(url, context) {
     try {
-        const response = await axios.post('http://127.0.0.1:5000/api/ehentaiAdd', {
+        const response = await axios.post('http://127.0.0.1:5000/api/ehentai/add', {
             url,
             group: context.group_id ?? 0,
             user: context.user_id
@@ -110,7 +110,7 @@ async function illustAddEhentai(url, context) {
 // 异步方法添加NHentai作品信息
 async function illustAddNhentai(gid, context) {
     try {
-        const response = await axios.post('http://127.0.0.1:5000/api/nhentaiAdd', {
+        const response = await axios.post('http://127.0.0.1:5000/api/ehentai/nhentai-add', {
             gid,
             group: context.group_id ?? 0,
             user: context.user_id
@@ -124,7 +124,7 @@ async function illustAddNhentai(gid, context) {
 // 异步方法获取作品排行
 async function getIllustRanking(mode = 'day', date = null) {
     try {
-        const response = await axios.get('http://127.0.0.1:5000/api/illust_ranking', {
+        const response = await axios.get('http://127.0.0.1:5000/api/pixiv/ranking', {
             params: { mode, date }
         });
         return response.data;
@@ -137,7 +137,7 @@ async function getIllustRanking(mode = 'day', date = null) {
 // 异步方法添加作品信息
 async function illustAddPixiv(illustId, context) {
 
-    const response = await axios.post('http://127.0.0.1:5000/api/PixivLib/illustAdd', {
+    const response = await axios.post('http://127.0.0.1:5000/api/pixiv/add', {
         illust: illustId,
         group: context.group_id ?? 0,
         user: context.user_id
@@ -149,7 +149,7 @@ async function illustAddPixiv(illustId, context) {
 
 async function illustAddDanbooru(illustId, context) {
 
-    const response = await axios.post('http://127.0.0.1:5000/api/DanbooruLib/danbooruAdd', {
+    const response = await axios.post('http://127.0.0.1:5000/api/danbooru/add', {
         illust: illustId,
         group: context.group_id ?? 0,
         user: context.user_id
@@ -165,10 +165,10 @@ export function illustRating(illustObj, context, rate) {
 
     let url;
     if (illustObj.type === 'pixiv') {
-        url = 'http://127.0.0.1:5000/api/PixivLib/illustRating';
+        url = 'http://127.0.0.1:5000/api/pixiv/rate';
     }
     if (illustObj.type === 'danbooru') {
-        url = 'http://127.0.0.1:5000/api/DanbooruLib/danbooruRating';
+        url = 'http://127.0.0.1:5000/api/danbooru/rate';
     }
     axios.post(url, {
         illust: illustObj.id,
@@ -196,21 +196,21 @@ export function illustRating(illustObj, context, rate) {
 export function illustRemove(illustObj, context) {
     let url;
     if (illustObj instanceof String) {
-        url = 'http://127.0.0.1:5000/api/PixivLib/illustRemove';
+        url = 'http://127.0.0.1:5000/api/pixiv/remove';
     } else {
         switch (illustObj.type) {
             case 'pixiv':
-                url = 'http://127.0.0.1:5000/api/PixivLib/illustRemove';
+                url = 'http://127.0.0.1:5000/api/pixiv/remove';
                 break;
             case 'danbooru':
-                url = 'http://127.0.0.1:5000/api/DanbooruLib/illustRemove';
+                url = 'http://127.0.0.1:5000/api/danbooru/remove';
                 break;
             default:
-                url = 'http://127.0.0.1:5000/api/PixivLib/illustRemove';
+                url = 'http://127.0.0.1:5000/api/pixiv/remove';
                 break;
         }
     }
-    axios.get(url, {
+    axios.delete(url, {
         params: {
             illust: illustObj,
         }
@@ -280,7 +280,7 @@ export async function getCommon(context) {
     }
 
 
-    axios.post('http://127.0.0.1:5000/api/Common/commonSearch', {
+    axios.post('http://127.0.0.1:5000/api/common/search', {
         query
     }).then(async response => {
         if (response.data.error) {
@@ -431,7 +431,7 @@ export async function pushDoujinshi(context) {
         console.log('推本 - 搜索关键词:', keyword);
 
         // 调用新的API接口
-        const response = await axios.post('http://127.0.0.1:5000/api/Ehentai/search-and-add', {
+        const response = await axios.post('http://127.0.0.1:5000/api/ehentai/search-and-add', {
             keyword,
             use_exhentai: true
         });
@@ -552,7 +552,7 @@ export async function pushDoujinshi(context) {
  */
 export async function handleEhentaiSelect(link, context) {
     try {
-        const response = await axios.post('http://127.0.0.1:5000/api/Ehentai/ehentaiAdd', {
+        const response = await axios.post('http://127.0.0.1:5000/api/ehentai/add', {
             url: link,
             group: context.group_id ?? 0,
             user: context.user_id
