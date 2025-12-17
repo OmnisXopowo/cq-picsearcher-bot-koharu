@@ -339,6 +339,8 @@
     "characterglm": {
       // 是否启用
       "enable": true,
+      // 是否启用昵称触发（通过nickname或bot_name触发角色对话）
+      "nicknameEnable": false,
       // 触发模型回复的昵称，设置空字符串将由meta.bot_name代替
       "nickname": "",
       // 自定义参数，将提交到会话最顶端,格式如下
@@ -364,6 +366,41 @@
         "bot_name": "",
         "user_info": "",
         "user_name": ""
+      },
+      // 聊天窗口配置
+      "chatWindow": {
+        // 是否启用聊天窗口功能
+        "enable": false,
+        // 窗口持续时间（毫秒），默认15分钟
+        "duration": 900000,
+        // 是否使用emohaa心理咨询模型（否则使用charglm-4角色扮演模型）- 当command未指定model时的默认值
+        "useEmohaa": true,
+        // 窗口关闭时的提示消息，{name}为角色名，{duration}为持续时间（分钟）
+        "replyOnClose": "{name}会诊结束，本次会诊共进行了{duration}分钟。期待下次为您服务！",
+        // 群聊消息缓存数量（用于AI理解群聊上下文）
+        "maxCacheSize": 15,
+        // 每次请求携带的最大上下文消息数
+        "maxContextMessages": 8,
+        // 命令配置列表，支持配置多个不同的角色命令（每个命令可以有独立的model和meta人设）
+        "commands": [
+          {
+            // 触发命令
+            "trigger": "/我需要xp医生",
+            // 角色名称（窗口激活后，消息包含此名称即触发AI回复）
+            "characterName": "xp医生",
+            // 窗口开启时的提示消息
+            "replyOnOpen": "已开启xp医生会诊窗口(15分钟内有效)，在消息中提及\"xp医生\"即可触发回复。发送 --r 可清空对话记录。",
+            // 使用的模型：emohaa（心理咨询）或 charglm-4（角色扮演），不填则使用全局useEmohaa配置
+            "model": "emohaa",
+            // 该角色的独立人设配置（不填则使用全局meta配置）
+            "meta": {
+              "user_info": "一位在群体社交中寻求心理支持的匿名用户",
+              "bot_info": "持有执业执照的Xenial Psychology（友善关系心理学）专家，专注于人际关系模式分析、社交焦虑干预与群体动力学研究。采用非评判性倾听、认知重构与角色扮演疗法，帮助个体建立健康的社交边界与情感表达方式。所有咨询遵循PAC（Professionally Anonymous Consultation）保密协议。",
+              "bot_name": "X.P.咨询师",
+              "user_name": "来访者"
+            }
+          }
+        ]
       }
     },
     "glm4": {
@@ -459,6 +496,40 @@
       "blackGroup": [],
       // 群组白名单（设置后将只允许白名单群组使用）
       "whiteGroup": []
+    },
+    // 赛博升堂 - 群聊禁言投票功能
+    "cyberCourt": {
+      // 是否启用
+      "enable": false,
+      // 投票时间窗口（分钟）
+      "voteWindowMinutes": 10,
+      // 快速通过投票数（仅初审有效）
+      "quickPassCount": 5,
+      // 禁言时长（分钟）
+      "muteTimeMinutes": 30,
+      // 投票催促间隔（分钟），超过此时间无人投票将自动提醒
+      "reminderIntervalMinutes": 2,
+      // 普通用户每日发起升堂限制（0=无限）
+      "userDailyLimit": 1,
+      // 管理员每日发起升堂限制（0=无限）
+      "adminDailyLimit": 0,
+      // 豁免角色（admin=群管理，owner=群主）
+      "immuneRoles": ["admin", "owner"],
+      // 豁免用户QQ
+      "immuneUsers": [],
+      // 群组黑名单
+      "blackGroup": [],
+      // 群组白名单（设置后将只允许白名单群组使用）
+      "whiteGroup": [],
+      // AI法官配置
+      "aiJudge": {
+        // 是否启用AI法官
+        "enable": true,
+        // GLM API密钥（留空则自动使用 characterglm.apiKey）
+        "apiKey": "",
+        // AI法官人设
+        "systemRole": "你是「小爱法官」，一位QQ群里的赛博法庭主审法官。风格：诙谐幽默、金句频出、像脱口秀演员一样点评案件，适度毒舌但不恶毒。任务：根据案由、诉状、陪审团意见和判决结果，输出100字以内的宣判小结。要求：1.语言活泼接地气，可以玩梗和网络用语 2.对判决结果进行戏谑性解读 3.适度吐槽原告或被告的行为 4.可以引用或魔改名言警句 5.结尾用一句话总结教训或感慨"
+      }
     }
   },
   // https://github.com/FlareSolverr/FlareSolverr
@@ -497,6 +568,11 @@
   "whatanimeToken": "",
   // ascii2d 自定义 host，格式：[protocol://]host[:port]
   "ascii2dHost": "ascii2d.net",
-  //反向代理worker Host
-  "reverseProxy":""
+  // 反向代理worker Host
+  "reverseProxy": "",
+  // 图片下载用的本地代理列表（按优先级排序，失败时自动切换下一个）
+  // 支持 http 和 socks5 协议，所有代理失败后会尝试直连，直连失败则降级为URL直发
+  "downloadProxies": [
+    { "host": "127.0.0.1", "port": 7890, "protocol": "http" }
+  ]
 }

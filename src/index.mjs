@@ -3,13 +3,14 @@ import Fs from 'fs-extra';
 import _ from 'lodash-es';
 import minimist from 'minimist';
 import RandomSeed from 'random-seed';
-import characterglm from './plugin/AImodule/characterglm.mjs';
+import characterglm, { chatWindowManager, messageContextManager } from './plugin/AImodule/characterglm.mjs';
 import glm4 from './plugin/AImodule/glm4.mjs';
 import tarotReader, { goodmorningSensei } from './plugin/AImodule/tarotReader.mjs';
 import ascii2d from './plugin/ascii2d.mjs';
 import bilibiliHandler from './plugin/bilibili/index.mjs';
 import broadcast from './plugin/broadcast.mjs';
 import corpus from './plugin/corpus.mjs';
+import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
 import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove ,pushDoujinshi} from './plugin/koharuApi.mjs';
@@ -181,6 +182,13 @@ bot
 // connect
 bot.connect();
 
+// 初始化聊天窗口管理器的发送消息回调
+chatWindowManager.setSendGroupMsgCallback((groupId, message) => {
+  if (bot.isReady()) {
+    bot('send_group_msg', { group_id: groupId, message });
+  }
+});
+
 
 /**
  * 处理回复给机器人的消息
@@ -305,6 +313,11 @@ async function commonHandle(e, context) {
 
   // 语言库
   if (corpus(context)) return true;
+
+  // 赛博升堂（投票禁言）
+  if (global.config.bot.cyberCourt?.enable) {
+    if (await cyberCourt(context)) return true;
+  }
 
   // 忽略指定正则的发言
   if (config.regs.ignore && getRegWithCache(config.regs, 'ignore').test(context.message)) return true;
@@ -645,6 +658,17 @@ async function groupMsg(e, context) {
         break;
     }
     console.log(debugMsgDeleteBase64Content(context.message));
+  }
+
+  // 聊天窗口激活时，记录所有群消息到上下文
+  if (chatWindowManager.isActive(context.group_id)) {
+    const nickname = context.sender?.nickname || context.sender?.card || `用户${context.user_id}`;
+    messageContextManager.addMessage(
+      context.group_id,
+      context.message,
+      context.user_id,
+      nickname
+    );
   }
 
   if ((await commonHandle(e, context)) || (await getGroupFile(context))) {

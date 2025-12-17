@@ -145,3 +145,19 @@ export async function getKeyObject(key, defaultValue) {
     return defaultValue || JSON.parse(value);
   }
 }
+
+/**
+ * 删除指定的key
+ * @param {string} key 
+ * @returns {Promise<number>} 删除的key数量
+ */
+export async function delKey(key) {
+  try {
+    const result = await redis.del(key);
+    console.log(`[RDS del]${key}: ${result}`);
+    return result;
+  } catch (err) {
+    console.error(`[RDS del]删除失败 ${key}: ${err}`);
+    return 0;
+  }
+}

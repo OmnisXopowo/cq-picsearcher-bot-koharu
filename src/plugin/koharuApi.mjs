@@ -374,12 +374,13 @@ export async function getCommon(context) {
                                 const url = Rvhost ? `${Rvhost}/${illust.large_file_url}` : illust.large_file_url;
 
                                 try {
-                                    const imgCQ = await downloadImage(url, context, !!Rvhost);
+                                    // 使用 Rvhost URL，启用多代理轮询，但禁用URL直发兜底以便在此处进行URL切换重试
+                                    const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
                                 } catch (error) {
-                                    // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求
-                                    console.warn('图片下载 - Rvhost 失败，尝试直接请求:', error.message);
-                                    const imgCQ = await downloadImage(illust.large_file_url, context, false);
+                                    // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求（使用原始URL）
+                                    console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
+                                    const imgCQ = await downloadImage(illust.large_file_url, context, { useNetworkProxy: false, allowUrlFallback: true });
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
                                 }
                             } catch (error) {
@@ -874,13 +875,14 @@ export default async (context) => {
                                     const Rvhost = global.config.reverseProxy;
                                     // 如果 reverseProxy 为空，则直接使用原始 URL
                                     const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
-                                    const imgCQ = await downloadImage(url, context, !!Rvhost);
+                                    // 使用 Rvhost URL，启用多代理轮询，但禁用URL直发兜底以便在此处进行URL切换重试
+                                    const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 } catch (error) {
-                                    // 如果使用代理失败，则尝试不使用代理直接请求
-                                    console.warn('图片下载 - 代理 失败，尝试直接请求:', error.message);
-                                    const imgCQ = await downloadImage(imageUrl, context, false);
+                                    // 如果使用 Rvhost URL 失败，则尝试原始URL
+                                    console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
+                                    const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 }
@@ -888,13 +890,14 @@ export default async (context) => {
 
 
                                 try {
-                                    const imgCQ = await downloadImage(imageUrl, context, true);
+                                    // cdn.donmai.us 直接下载，启用多代理轮询，但禁用URL直发兜底
+                                    const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: true, allowUrlFallback: false });
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 } catch (error) {
-                                    // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求
-                                    console.warn('图片下载 - Rvhost 失败，尝试直接请求:', error.message);
-                                    const imgCQ = await downloadImage(imageUrl, context, false);
+                                    // 多代理+直连都失败，最终降级为URL直发
+                                    console.warn('图片下载 - 所有方式失败，降级为URL直发:', error.message);
+                                    const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
                                     texts.push(imgCQ);
                                     replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
                                 }
@@ -953,12 +956,16 @@ function replyEhentaiRatingMsg(url, context, msg) {
     global.replyMsg(context, msg, false, true)
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3); // 缓存三天过期
+                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                console.log(`[EHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
-                console.error('回复replyEhentaiRatingMsg 返回:', msgRet);
+                console.error(`[EHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
+                console.error(`[EHentai消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+                console.error(`[EHentai消息] 错误信息: ${msgRet?.message}`);
+                console.error(`[EHentai消息] 完整返回:`, msgRet);
             }
         }).catch(err => {
-            console.error('回复replyEhentaiRatingMsg 错误:', err);
+            console.error('[EHentai消息] ✗ 发送异常:', err);
         });
 }
 
@@ -967,12 +974,16 @@ function replyNhentaiRatingMsg(gid, context, msg) {
     global.replyMsg(context, msg, false, true)
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3); // 缓存三天过期
+                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                console.log(`[NHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
-                console.error('回复replyNhentaiRatingMsg 返回:', msgRet);
+                console.error(`[NHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
+                console.error(`[NHentai消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+                console.error(`[NHentai消息] 错误信息: ${msgRet?.message}`);
+                console.error(`[NHentai消息] 完整返回:`, msgRet);
             }
         }).catch(err => {
-            console.error('回复replyNhentaiRatingMsg 错误:', err);
+            console.error('[NHentai消息] ✗ 发送异常:', err);
         });
 }
 
@@ -1007,12 +1018,16 @@ function replyPixivRatingMsg(illustId, context, msg) {
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                console.log(`[Pixiv消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
-                console.error('回复replyPixivRatingMsg 返回:', msgRet);
+                console.error(`[Pixiv消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
+                console.error(`[Pixiv消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+                console.error(`[Pixiv消息] 错误信息: ${msgRet?.message}`);
+                console.error(`[Pixiv消息] 完整返回:`, msgRet);
             }
         })
         .catch(err => {
-            console.error('回复replyPixivRatingMsg 错误:', err);
+            console.error('[Pixiv消息] ✗ 发送异常:', err);
         });
 }
 
@@ -1029,12 +1044,16 @@ function replyDanbooruRatingMsg(illustId, context, msg, reply = true) {
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
                 global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
-                console.error('回复replyDanbooruRatingMsg 返回:', msgRet);
+                console.error(`[Danbooru消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
+                console.error(`[Danbooru消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+                console.error(`[Danbooru消息] 错误信息: ${msgRet?.message}`);
+                console.error(`[Danbooru消息] 完整返回:`, msgRet);
             }
         })
         .catch(err => {
-            console.error('回复replyDanbooruRatingMsg 错误:', err);
+            console.error('[Danbooru消息] ✗ 发送异常:', err);
         });
 }
 
@@ -1187,35 +1206,56 @@ class DanbooruData {
 }
 
 /**
- * 统一的图片下载函数
+ * 统一的图片下载函数（带完整降级链）
+ * 
+ * 降级链：
+ * 1. pximgProxy URL转换（始终生效，不降级）
+ * 2. 多代理轮询下载（在 axiosProxy.download 内部实现）
+ * 3. 直连下载（在 axiosProxy.download 内部实现）
+ * 4. URL直发（CQ.img 兜底）
+ * 
  * @param {string} url - 图片URL
  * @param {object} context - 上下文对象
- * @param {boolean} useProxy - 是否使用代理
+ * @param {object} options - 配置选项
+ * @param {boolean} [options.useNetworkProxy=true] - 是否使用网络代理（启用多代理轮询+直连降级）
+ * @param {boolean} [options.allowUrlFallback=true] - 是否允许URL直发兜底
  * @returns {Promise<string>} CQ码格式的图片
  */
-async function downloadImage(url, context, useProxy = true) {
-    try {
-        let targetUrl = url;
+async function downloadImage(url, context, options = {}) {
+    const { 
+        useNetworkProxy = true,
+        allowUrlFallback = true 
+    } = options;
+    
+    let targetUrl = url;
+    const host = new URL(url).hostname;
 
-        // 如果是 Pixiv 图片且需要使用代理，则转换为代理 URL
-        if (useProxy && /^https?:\/\/i\.pximg\.net\//.test(url)) {
-            const proxyUrl = getSetuUrl(proxy, url);
-            if (proxyUrl) {
-                targetUrl = proxyUrl;
-                console.log(`图片下载 - Pixiv URL 代理转换: ${url.substring(0, 60)}... -> ${targetUrl.substring(0, 60)}...`);
-            }
+    // 【Layer 0】pximgProxy URL域名替换 - 始终应用于 i.pximg.net，不降级
+    if (/^https?:\/\/i\.pximg\.net\//.test(url)) {
+        const proxyUrl = getSetuUrl(proxy, url);
+        if (proxyUrl) {
+            targetUrl = proxyUrl;
+            console.log(`[图片下载] Pixiv URL 代理转换: ${host} -> ${new URL(targetUrl).hostname}`);
         }
+    }
 
-        // 使用统一的 axios 封装下载（封装会在需要时回退到 5001）
-        const response = await axios.download(targetUrl, { useProxy });
+    // 【Layer 1-2】尝试下载（多代理轮询 + 直连，在 axios.download 内部实现）
+    try {
+        console.log(`[图片下载] 开始下载: ${new URL(targetUrl).hostname}${new URL(targetUrl).pathname.substring(0, 50)}...`);
+        const response = await axios.download(targetUrl, { useProxy: useNetworkProxy });
         const filepath = createCache(url, Buffer.from(response.data));
+        console.log(`[图片下载] ✓ 成功缓存 (${filepath}, 大小: ${response.data.length} bytes)`);
         return CQ.img(filepath);
     } catch (error) {
-        if (useProxy) {
-            console.warn('图片下载 - downloadImage 使用代理请求失败，尝试直接请求:', error.message);
-        } else {
-            console.error('图片下载 - downloadImage 直接请求失败:', error.message);
+        const errorMsg = error.message || String(error);
+        console.error(`[图片下载] ✗ 下载失败: ${errorMsg}`);
+        
+        // 【Layer 3】URL直发兜底
+        if (allowUrlFallback) {
+            console.warn(`[图片下载] 降级为URL直发: ${targetUrl.substring(0, 80)}...`);
+            return CQ.img(targetUrl);
         }
+        
         throw error;
     }
 }

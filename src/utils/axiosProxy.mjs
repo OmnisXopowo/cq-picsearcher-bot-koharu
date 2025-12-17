@@ -33,6 +33,43 @@ emitter.onConfigLoad(() => {
 });
 
 /**
+ * 获取下载代理列表配置
+ * @returns {Array<{host: string, port: number, protocol: string}>}
+ */
+function getDownloadProxies() {
+  const proxies = global.config?.downloadProxies;
+  if (Array.isArray(proxies) && proxies.length > 0) {
+    return proxies;
+  }
+  // 默认回退到单一代理（兼容旧配置）
+  return [{ host: '127.0.0.1', port: 7890, protocol: 'http' }];
+}
+
+/**
+ * 根据代理配置创建 axios 实例
+ * @param {{host: string, port: number, protocol: string}} proxyConfig
+ * @returns {import('axios').AxiosInstance}
+ */
+function createProxyAxiosInstance(proxyConfig) {
+  const protocol = proxyConfig.protocol || 'http';
+  
+  if (protocol === 'socks5' || protocol === 'socks') {
+    // SOCKS5 代理需要使用 httpsAgent
+    const agent = new SocksProxyAgent(`socks5://${proxyConfig.host}:${proxyConfig.port}`);
+    return Axios.create({ httpsAgent: agent, httpAgent: agent });
+  }
+  
+  // HTTP 代理使用 Axios 内置的 proxy 配置
+  return Axios.create({ 
+    proxy: { 
+      host: proxyConfig.host, 
+      port: proxyConfig.port, 
+      protocol 
+    } 
+  });
+}
+
+/**
  * 判断是否为本地后端生产地址（5000）
  * @param {string} url
  */
@@ -74,20 +111,59 @@ async function requestWithFallback(method, instance, url, data, config) {
 }
 
 /**
- * 专用的下载方法：用于图片预下载场景，支持使用本地 HTTP 代理 (127.0.0.1:7890) 或不使用代理。
+ * 专用的下载方法：支持多代理轮询，所有代理失败后降级为直连
  * @param {string} url
  * @param {{useProxy?: boolean, config?: object}} opts
  * @returns {Promise<import('axios').AxiosResponse>}
  */
 async function download(url, opts = {}) {
   const { useProxy = true, config = {} } = opts;
-  if (useProxy) {
-    // 创建临时 axios 实例以使用本地 HTTP 代理，保持 responseType 可被覆盖
-    const tmp = Axios.create({ proxy: { host: '127.0.0.1', port: 7890, protocol: 'http' } });
-    return requestWithFallback('get', tmp, url, undefined, { ...config, responseType: 'arraybuffer' });
+  const axiosConfig = { ...config, responseType: 'arraybuffer' };
+  
+  if (!useProxy) {
+    // 不使用代理，直接使用共享 client
+    return requestWithFallback('get', client, url, undefined, axiosConfig);
   }
-  // 不使用本地代理则使用共享 client
-  return requestWithFallback('get', client, url, undefined, { ...config, responseType: 'arraybuffer' });
+  
+  // 多代理轮询
+  const proxies = getDownloadProxies();
+  const errors = [];
+  
+  // Layer 1: 多代理轮询
+  for (const proxyConfig of proxies) {
+    const proxyLabel = `${proxyConfig.host}:${proxyConfig.port}`;
+    try {
+      const proxyInstance = createProxyAxiosInstance(proxyConfig);
+      console.log(`[下载] 尝试代理 ${proxyLabel} (${proxyConfig.protocol || 'http'})`);
+      const response = await requestWithFallback('get', proxyInstance, url, undefined, axiosConfig);
+      console.log(`[下载] ✓ 代理 ${proxyLabel} 成功`);
+      return response;
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      console.warn(`[下载] ✗ 代理 ${proxyLabel} 失败: ${errorMsg}`);
+      errors.push({ proxy: proxyConfig, error });
+    }
+  }
+  
+  // Layer 2: 直连（无代理）
+  try {
+    console.log(`[下载] 所有代理失败 (${errors.length}个)，尝试直连`);
+    const response = await requestWithFallback('get', client, url, undefined, axiosConfig);
+    console.log(`[下载] ✓ 直连成功`);
+    return response;
+  } catch (error) {
+    const errorMsg = error.message || String(error);
+    console.error(`[下载] ✗ 直连也失败: ${errorMsg}`);
+    errors.push({ proxy: null, error });
+  }
+  
+  // 所有尝试失败，抛出聚合错误
+  const errorSummary = errors.map(e => 
+    `${e.proxy ? `${e.proxy.host}:${e.proxy.port}` : '直连'}: ${e.error.message || String(e.error)}`
+  ).join('; ');
+  const aggregatedError = new Error(`所有下载方式失败: ${errorSummary}`);
+  aggregatedError.errors = errors;
+  throw aggregatedError;
 }
 
 // 针对 client/cfClient 的便捷 get/post 导出函数
