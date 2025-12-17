@@ -67,7 +67,7 @@
     // saucenao 默认搜索库，可选值：["all", "pixiv", "danbooru", "doujin", "anime"]
     "saucenaoDefaultDB": "all",
     // saucenao 相似度低于这个百分比将被认定为相似度过低
-    "saucenaoLowAcc": 60,
+    "saucenaoLowAcc": 75,
     // 是否优先从本地上传图片到 saucenao 搜索（否时使用 saucenao 的 URL API）
     "saucenaoLocalUpload": false,
     // 是否在 saucenao 超额时自动换用 ascii2d
