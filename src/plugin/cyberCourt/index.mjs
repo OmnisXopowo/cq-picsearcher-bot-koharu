@@ -386,6 +386,62 @@ function shouldSendReminder(session, config) {
   return { shouldSend: false, reason: '等待群内有新消息' };
 }
 
+/**
+ * 格式化倒计时
+ */
+function formatCountdown(remainingMs) {
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  
+  if (minutes > 0) {
+    return `${minutes}分${seconds}秒`;
+  }
+  return `${seconds}秒`;
+}
+
+/**
+ * 判断是否应该发送播报
+ * @returns {Object} { shouldSend: boolean, reason: string }
+ */
+function shouldSendReminder(session, config) {
+  const now = Date.now();
+  const endTime = session.startTime + session.duration;
+  const remainingTime = endTime - now;
+  const reminderInterval = (config.reminderIntervalMinutes || 2) * 60 * 1000;
+  
+  // 如果剩余时间少于1分钟，检查是否应该强制发送最后一次播报
+  if (remainingTime < 60 * 1000) {
+    // 必须距离上次播报超过催促间隔才发送最后一次
+    const timeSinceLastReminder = now - session.lastReminderMsgTime;
+    if (timeSinceLastReminder >= reminderInterval) {
+      return { shouldSend: true, reason: '最后1分钟', isLastReminder: true };
+    }
+    return { shouldSend: false, reason: '上次播报不足2分钟，等待' };
+  }
+  
+  // 正常播报逻辑：计算距离上次播报是否已超过2分钟
+  const timeSinceLastReminder = now - session.lastReminderMsgTime;
+  
+  // 如果距离上次播报未达到2分钟，不发送
+  if (timeSinceLastReminder < reminderInterval) {
+    return { shouldSend: false, reason: '距上次播报不足2分钟' };
+  }
+  
+  // 距离上次播报已超过2分钟，检查是否有新群聊消息
+  const timeSinceLastGroupMsg = now - session.lastGroupMsgTime;
+  
+  // 只有当播报后群内有新消息时，才开始计时
+  // 检查群内最后消息是否在上次播报之后
+  if (session.lastGroupMsgTime > session.lastReminderMsgTime) {
+    // 有新消息，发送播报
+    return { shouldSend: true, reason: '有新群聊消息且满足间隔' };
+  }
+  
+  // 如果上次播报后群内没有新消息，则不发送（避免刷屏）
+  return { shouldSend: false, reason: '等待群内有新消息' };
+}
+
 // ==================== AI法官 ====================
 
 async function generateJudgeSummary(session, isGuilty, reason) {
@@ -683,8 +739,6 @@ function formatResult(session, favor, against, total, isGuilty, reason, includeM
   
   let msg = `⚖️ ═══ 审判结果 ═══ ⚖️\n\n`;
   msg += `📜 案由：「${cleanMsg}」\n`;
-  let msg = `${retrialTag}⚖️ ═══ 审判结果 ═══ ⚖️\n\n`;
-  msg += `📜 案由：「${originalMsgPreview}」\n`;
   msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   msg += `📊 投票统计：\n`;
   msg += `   👍 赞成：${favor} 票\n`;
@@ -852,8 +906,6 @@ async function handleRetrial(session, favor, against, total, reason) {
   
   let message = `⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
   message += `📜 案由：「${cleanMsgDisplay}」\n`;
-  let message = `【复审】⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
-  message += `📜 案由：「${originalMsgPreview}」\n`;
   message += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   message += `📊 投票统计：\n`;
   message += `   👍 赞成：${favor} 票\n`;
@@ -1028,6 +1080,7 @@ async function handleStartCourt(context) {
     },
     courtReason,
     votes: {},
+    lastFeedbackTime: 0,
     lastVoteTime: now,
     isRetrial,
     defendantCount: defendantCount + 1,
