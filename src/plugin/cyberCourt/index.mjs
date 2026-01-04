@@ -30,7 +30,7 @@ const logError = (...args) => console.error(LOG_PREFIX, ...args);
 // ==================== 工具函数 ====================
 
 /**
- * 从消息对象中提取文本内容
+ * 从消息对象中提取文本内容，转义特殊CQ码为中文描述
  */
 function extractMessageText(msgObj) {
   if (typeof msgObj === 'string') {
@@ -58,6 +58,21 @@ function extractMessageText(msgObj) {
 }
 
 /**
+ * 清理消息中的CQ码，替换为中文描述
+ */
+function cleanMessageCQCode(text) {
+  if (!text) return text;
+  
+  return String(text)
+    .replace(/\[CQ:image[^\]]*\]/g, '[图片]')
+    .replace(/\[CQ:face[^\]]*\]/g, '[表情]')
+    .replace(/\[CQ:record[^\]]*\]/g, '[语音]')
+    .replace(/\[CQ:video[^\]]*\]/g, '[视频]')
+    .replace(/\[CQ:at,qq=\d+(?:,name=[^\]]*)?(?:,text=[^\]]*)?/g, '[')
+    .replace(/\[CQ:[^\]]*\]/g, '[消息]');
+}
+
+/**
  * @typedef {Object} VoteData
  * @property {1|-1} choice - 投票选择：1=赞成，-1=反对
  * @property {string|null} reason - 投票理由
@@ -79,6 +94,9 @@ function extractMessageText(msgObj) {
  * @property {number} lastFeedbackTime - 上次反馈时间戳
  * @property {number} lastVoteTime - 上次投票时间戳
  * @property {boolean} isRetrial - 是否为复审
+ * @property {number} lastGroupMsgTime - 群内最后消息时间戳
+ * @property {number} lastReminderMsgTime - 上次播报消息时间戳
+ * @property {number} nextScheduledReminderTime - 下次计划播报时间
  */
 
 /** @type {Map<number, CourtSession>} */
@@ -259,6 +277,62 @@ function getKeyVotePhrase() {
   return phrases[Math.floor(Math.random() * phrases.length)];
 }
 
+/**
+ * 格式化倒计时
+ */
+function formatCountdown(remainingMs) {
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  
+  if (minutes > 0) {
+    return `${minutes}分${seconds}秒`;
+  }
+  return `${seconds}秒`;
+}
+
+/**
+ * 判断是否应该发送播报
+ * @returns {Object} { shouldSend: boolean, reason: string }
+ */
+function shouldSendReminder(session, config) {
+  const now = Date.now();
+  const endTime = session.startTime + session.duration;
+  const remainingTime = endTime - now;
+  const reminderInterval = (config.reminderIntervalMinutes || 2) * 60 * 1000;
+  
+  // 如果剩余时间少于1分钟，检查是否应该强制发送最后一次播报
+  if (remainingTime < 60 * 1000) {
+    // 必须距离上次播报超过催促间隔才发送最后一次
+    const timeSinceLastReminder = now - session.lastReminderMsgTime;
+    if (timeSinceLastReminder >= reminderInterval) {
+      return { shouldSend: true, reason: '最后1分钟', isLastReminder: true };
+    }
+    return { shouldSend: false, reason: '上次播报不足2分钟，等待' };
+  }
+  
+  // 正常播报逻辑：计算距离上次播报是否已超过2分钟
+  const timeSinceLastReminder = now - session.lastReminderMsgTime;
+  
+  // 如果距离上次播报未达到2分钟，不发送
+  if (timeSinceLastReminder < reminderInterval) {
+    return { shouldSend: false, reason: '距上次播报不足2分钟' };
+  }
+  
+  // 距离上次播报已超过2分钟，检查是否有新群聊消息
+  const timeSinceLastGroupMsg = now - session.lastGroupMsgTime;
+  
+  // 只有当播报后群内有新消息时，才开始计时
+  // 检查群内最后消息是否在上次播报之后
+  if (session.lastGroupMsgTime > session.lastReminderMsgTime) {
+    // 有新消息，发送播报
+    return { shouldSend: true, reason: '有新群聊消息且满足间隔' };
+  }
+  
+  // 如果上次播报后群内没有新消息，则不发送（避免刷屏）
+  return { shouldSend: false, reason: '等待群内有新消息' };
+}
+
 // ==================== AI法官 ====================
 
 async function generateJudgeSummary(session, isGuilty, reason) {
@@ -285,7 +359,7 @@ async function generateJudgeSummary(session, isGuilty, reason) {
     const { favor, against } = countVotes(session);
     
     const msgStr = extractMessageText(session.defendant.originalMsg);
-    const cleanMsg = msgStr.replace(/\[CQ:[^\]]+\]/g, '[图片/表情]').trim();
+    const cleanMsg = cleanMessageCQCode(msgStr);
     
     const opinions = Object.values(session.votes)
       .filter(v => v.reason)
@@ -428,13 +502,10 @@ async function generateReminderText(session, favor, against, total, config) {
  */
 function formatAnnouncement(session, config) {
   const msgStr = extractMessageText(session.defendant.originalMsg);
-  const originalMsgPreview = msgStr.length > 50
-    ? msgStr.slice(0, 50) + '...'
-    : msgStr;
-  
-  const cleanMsg = originalMsgPreview
-    .replace(/\[CQ:[^\]]+\]/g, '[图片/表情]')
-    .trim();
+  const cleanedMsg = cleanMessageCQCode(msgStr);
+  const originalMsgPreview = cleanedMsg.length > 50
+    ? cleanedMsg.slice(0, 50) + '...'
+    : cleanedMsg;
   
   const retrialTag = session.isRetrial ? '【复审】' : '';
   
@@ -442,7 +513,7 @@ function formatAnnouncement(session, config) {
 🥁 咚咚咚！！！ 威—— 武—— ！
 
 👨‍⚖️ 被告：${session.defendant.nickname}
-📜 案由：「${cleanMsg}」
+📜 案由：「${originalMsgPreview}」
 👨‍💼 原告：${session.prosecutor.nickname}
 ⏰ 投票时间：${config.voteWindowMinutes} 分钟`;
 
@@ -459,7 +530,7 @@ function formatAnnouncement(session, config) {
   announcement += `\n${'━'.repeat(8)}\n💬 投票方式：发送 /赞成 [理由] 或 /反对 [理由]\n⚠️ 每人仅限投票一次 | 原告和被告不得投票\n`;
   
   if (session.isRetrial) {
-    announcement += `\n\n⚠️ 本案为复审（被告今日第${session.defendantCount}次被起诉）\n📋 复审将汇总投票结果供管理员参考\n⏳ 庭审结束后30分钟内，管理员可发送 /宣判 执行禁言\n💡 或聊天软件中设置手动禁言时长`;
+    announcement += `\n\n⚠️ 本案为复审（被告今日第${session.defendantCount}次被起诉）\n📋 复审将汇总投票结果供管理员参考\n🔨 管理员可发送 /宣判 提前结案\n⏳ 或庭审完毕30分钟内发送/宣判执行`;
   } else {
     announcement += `\n🎯 管理员：发送 /宣判 提前结案 或 /撤案 取消`;
   }
@@ -472,19 +543,16 @@ function formatAnnouncement(session, config) {
  */
 function formatResult(session, favor, against, total, isGuilty, reason, includeMuseInfo = false) {
   const msgStr = extractMessageText(session.defendant.originalMsg);
-  const originalMsgPreview = msgStr.length > 50
-    ? msgStr.slice(0, 50) + '...'
-    : msgStr;
-  
-  const cleanMsg = originalMsgPreview
-    .replace(/\[CQ:[^\]]+\]/g, '[图片/表情]')
-    .trim();
+  const cleanedMsg = cleanMessageCQCode(msgStr);
+  const originalMsgPreview = cleanedMsg.length > 50
+    ? cleanedMsg.slice(0, 50) + '...'
+    : cleanedMsg;
   
   const retrialTag = session.isRetrial ? '【复审】' : '';
   const config = getGroupConfig(session.groupId);
   
   let msg = `${retrialTag}⚖️ ═══ 审判结果 ═══ ⚖️\n\n`;
-  msg += `📜 案由：「${cleanMsg}」\n`;
+  msg += `📜 案由：「${originalMsgPreview}」\n`;
   msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   msg += `📊 投票统计：\n`;
   msg += `   👍 赞成：${favor} 票\n`;
@@ -639,13 +707,13 @@ async function handleRetrial(session, favor, against, total, reason) {
   const aiSummary = await generateJudgeSummary(session, isGuilty, reason);
   
   const msgStr = extractMessageText(session.defendant.originalMsg);
-  const cleanMsg = msgStr.length > 50
-    ? msgStr.slice(0, 50) + '...'
-    : msgStr;
-  const cleanMsgDisplay = cleanMsg.replace(/\[CQ:[^\]]+\]/g, '[图片/表情]').trim();
+  const cleanedMsg = cleanMessageCQCode(msgStr);
+  const originalMsgPreview = cleanedMsg.length > 50
+    ? cleanedMsg.slice(0, 50) + '...'
+    : cleanedMsg;
   
   let message = `【复审】⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
-  message += `📜 案由：「${cleanMsgDisplay}」\n`;
+  message += `📜 案由：「${originalMsgPreview}」\n`;
   message += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   message += `📊 投票统计：\n`;
   message += `   👍 赞成：${favor} 票\n`;
@@ -655,9 +723,9 @@ async function handleRetrial(session, favor, against, total, reason) {
   
   message += `\n${'━'.repeat(8)}\n`;
   message += `📋 投票结果已汇总，管理员可：\n`;
-  message += `   1️⃣ 直接手动设置禁言时间\n`;
-  message += `   2️⃣ 发送 /宣判 由机器人执行禁言${config.muteTimeMinutes}分钟\n`;
-  message += `⏳ ${timeoutMinutes}分钟内未处理将自动释放`;
+  message += `   1️⃣ 发送 /宣判 执行禁言${config.muteTimeMinutes}分钟\n`;
+  message += `   2️⃣ 手动设置禁言时长\n`;
+  message += `⏳ 30分钟内未处理将自动释放被告`;
   
   if (aiSummary) {
     message += aiSummary;
@@ -666,43 +734,47 @@ async function handleRetrial(session, favor, against, total, reason) {
   const result = await global.sendGroupMsg(session.groupId, message);
   const messageId = result?.message_id;
   
+  log(`复审消息已发送，result=${JSON.stringify(result)}, messageId=${messageId}`);
+  
   // 保存待裁决状态
-  if (messageId) {
-    const pendingData = {
-      groupId: session.groupId,
-      defendantId: session.defendant.userId,
-      defendantName: session.defendant.nickname,
-      prosecutorId: session.prosecutor.userId,
-      originalMsg: session.defendant.originalMsg,
-      courtReason: session.courtReason,
-      favor,
-      against,
-      total,
-      createTime: Date.now()
-    };
-    
-    const redisKey = getPendingVerdictKey(session.groupId, messageId);
-    await setKeyObject(redisKey, pendingData, timeoutMinutes * 60);
-    
-    pendingVerdictMessages.set(session.groupId, messageId);
-    
-    // 设置超时自动释放
-    setTimeout(async () => {
-      const stillPending = await getKeyObject(redisKey);
-      if (stillPending) {
-        await delKey(redisKey);
-        pendingVerdictMessages.delete(session.groupId);
-        
-        await global.sendGroupMsg(session.groupId, 
-          `【复审超时】⚖️ 管理员未在${timeoutMinutes}分钟内处理\n` +
-          `🛡️ 被告 ${session.defendant.nickname} 已自动释放`
-        );
-      }
-    }, timeoutMinutes * 60 * 1000);
-    
-    log(`群 ${session.groupId} 复审等待管理员裁决，${timeoutMinutes}分钟后超时`);
+  // 即使 messageId 为空，也应该保存状态（使用唯一标识符）
+  const finalMessageId = messageId || `retrial_${session.groupId}_${Date.now()}`;
+  
+  const pendingData = {
+    groupId: session.groupId,
+    defendantId: session.defendant.userId,
+    defendantName: session.defendant.nickname,
+    prosecutorId: session.prosecutor.userId,
+    originalMsg: session.defendant.originalMsg,
+    courtReason: session.courtReason,
+    favor,
+    against,
+    total,
+    createTime: Date.now()
+  };
+  
+  const redisKey = getPendingVerdictKey(session.groupId, finalMessageId);
+  await setKeyObject(redisKey, pendingData, timeoutMinutes * 60);
+  
+  pendingVerdictMessages.set(session.groupId, finalMessageId);
+  
+  // 设置超时自动释放
+  setTimeout(async () => {
+    const stillPending = await getKeyObject(redisKey);
+    if (stillPending) {
+      await delKey(redisKey);
+      pendingVerdictMessages.delete(session.groupId);
+      
+      await global.sendGroupMsg(session.groupId, 
+        `【复审超时】⚖️ 管理员未在${timeoutMinutes}分钟内处理\n` +
+        `🛡️ 被告 ${session.defendant.nickname} 已自动释放`
+      );
+    }
+  }, timeoutMinutes * 60 * 1000);
+  
+  log(`群 ${session.groupId} 复审等待管理员裁决，已保存待裁决状态，${timeoutMinutes}分钟后超时`);
   }
-}
+
 
 /**
  * 处理发起升堂
@@ -799,10 +871,11 @@ async function handleStartCourt(context) {
   // 创建审判会话
   const duration = config.voteWindowMinutes * 60 * 1000;
   const prosecutorNickname = context.sender?.card || context.sender?.nickname || String(user_id);
+  const now = Date.now();
   const session = {
     groupId: group_id,
     active: true,
-    startTime: Date.now(),
+    startTime: now,
     duration,
     timeout: setTimeout(() => endCourt(group_id, '窗口期结束'), duration),
     defendant: {
@@ -818,9 +891,12 @@ async function handleStartCourt(context) {
     courtReason,
     votes: {},
     lastFeedbackTime: 0,
-    lastVoteTime: Date.now(),
+    lastVoteTime: now,
     isRetrial,
-    defendantCount: defendantCount + 1
+    defendantCount: defendantCount + 1,
+    lastGroupMsgTime: now,
+    lastReminderMsgTime: now,
+    nextScheduledReminderTime: now + (config.reminderIntervalMinutes || 2) * 60 * 1000
   };
   
   courtSessions.set(group_id, session);
@@ -848,11 +924,20 @@ async function handleStartCourt(context) {
     }
     
     const now = Date.now();
+    const endTime = currentSession.startTime + currentSession.duration;
+    const remainingTime = endTime - now;
+    
+    // 计算倒计时
+    const countdown = formatCountdown(remainingTime);
+    
     const timeSinceLastVote = now - currentSession.lastVoteTime;
     const reminderInterval = (config.reminderIntervalMinutes || 2) * 60 * 1000;
     
-    // 如果超过设定时间没有投票，发送催促
-    if (timeSinceLastVote >= reminderInterval) {
+    // 判断是否应该发送播报
+    const { shouldSend, reason, isLastReminder } = shouldSendReminder(currentSession, config);
+    
+    // 仅当已到达播报时间且满足条件时才发送
+    if (shouldSend && timeSinceLastVote >= reminderInterval) {
       const { favor, against, total } = countVotes(currentSession);
       
       // 检查是否接近快速通过阈值（仅非复审）
@@ -863,8 +948,25 @@ async function handleStartCourt(context) {
       // 生成AI催促文案
       const aiReminder = await generateReminderText(currentSession, favor, against, total, config);
       
-      let reminderMsg = `⚖️ 投票进度播报 ⚖️\n\n`;
-      reminderMsg += `📊 当前票数：✅ 赞成 ${favor} | ❌ 反对 ${against}`;
+      // 获取案由信息
+      const msgStr = extractMessageText(currentSession.defendant.originalMsg);
+      const cleanedMsg = cleanMessageCQCode(msgStr);
+      const caseInfo = cleanedMsg.length > 40
+        ? cleanedMsg.slice(0, 40) + '...'
+        : cleanedMsg;
+      
+      let reminderMsg = `⚖️ 投票进度播报 ⚖️ ⏱️ ${countdown}\n\n`;
+      reminderMsg += `👨‍⚖️ 被告：${currentSession.defendant.nickname}\n`;
+      reminderMsg += `📜 案由：${caseInfo}\n`;
+      
+      if (currentSession.courtReason) {
+        const reasonPreview = currentSession.courtReason.length > 30
+          ? currentSession.courtReason.slice(0, 30) + '...'
+          : currentSession.courtReason;
+        reminderMsg += `📝 诉状：${reasonPreview}\n`;
+      }
+      
+      reminderMsg += `\n📊 当前票数：✅ 赞成 ${favor} | ❌ 反对 ${against}`;
       
       // 只在非复审时显示快速通过进度
       if (!currentSession.isRetrial) {
@@ -876,14 +978,18 @@ async function handleStartCourt(context) {
         }
       }
       
+      if (isLastReminder) {
+        reminderMsg += `\n\n🔴 最后1分钟！请尽快投票！`;
+      }
+      
       reminderMsg += `\n\n💬 ${aiReminder}`;
       
       await global.sendGroupMsg(group_id, reminderMsg);
       
-      // 更新最后投票时间，避免重复催促
-      currentSession.lastVoteTime = now;
+      // 更新最后催促时间
+      currentSession.lastReminderMsgTime = now;
       
-      log(`群 ${group_id} 发送投票催促`);
+      log(`群 ${group_id} 发送投票催促 (${reason})`);
     }
   }, 30000); // 每30秒检查一次
   
@@ -984,9 +1090,16 @@ async function handleEndNow(context) {
   
   // 检查是否有待裁决的复审
   const pendingMsgId = pendingVerdictMessages.get(group_id);
+  log(`查询待裁决状态: groupId=${group_id}, pendingMsgId=${pendingMsgId}`);
+  
   if (pendingMsgId) {
+    // 立即从Map中删除，防止重复宣判
+    pendingVerdictMessages.delete(group_id);
+    
     const redisKey = getPendingVerdictKey(group_id, pendingMsgId);
     const pendingData = await getKeyObject(redisKey);
+    
+    log(`从Redis查询待裁决数据: key=${redisKey}, data=${JSON.stringify(pendingData)}`);
     
     if (pendingData) {
       const config = getGroupConfig(group_id);
@@ -1027,11 +1140,14 @@ async function handleEndNow(context) {
         log(`复审宣判: 群${group_id} 被告${pendingData.defendantId} 无罪释放`);
       }
       
-      // 清理待裁决状态
-      await delKey(redisKey);
-      pendingVerdictMessages.delete(group_id);
+      // 清理Redis中的待裁决状态（异步清理）
+      delKey(redisKey).catch(e => logError('删除待裁决数据失败:', e.message));
       return true;
+    } else {
+      log(`待裁决数据已过期或不存在: key=${redisKey}`);
     }
+  } else {
+    log(`未找到待裁决消息ID: groupId=${group_id}`);
   }
   
   log(`群 ${group_id} 没有进行中的审判或待裁决的复审`);
@@ -1106,6 +1222,13 @@ export default async function cyberCourt(context) {
   if (context.message_type !== 'group') return false;
   
   const { message, group_id } = context;
+  
+  // 记录群内最后消息时间，用于智能播报判断
+  const currentSession = courtSessions.get(group_id);
+  if (currentSession && currentSession.active) {
+    currentSession.lastGroupMsgTime = Date.now();
+  }
+  
   const groupConfig = getGroupConfig(group_id);
   
   // 检查黑白名单
