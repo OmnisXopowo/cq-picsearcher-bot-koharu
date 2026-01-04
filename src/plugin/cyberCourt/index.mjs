@@ -17,6 +17,7 @@
  */
 
 import AxiosProxy from '../../utils/axiosProxy.mjs';
+import CQ from '../../utils/CQcode.mjs';
 import dailyCount from '../../utils/dailyCount.mjs';
 import { getKeyObject, setKeyObject, delKey } from '../../utils/redisClient.mjs';
 import { sleep } from '../../utils/sleep.mjs';
@@ -76,7 +77,6 @@ function extractMessageText(msgObj) {
  * @property {Object} prosecutor - 原告信息
  * @property {string} courtReason - 诉状
  * @property {Object.<number, VoteData>} votes - 投票数据
- * @property {number} lastFeedbackTime - 上次反馈时间戳
  * @property {number} lastVoteTime - 上次投票时间戳
  * @property {boolean} isRetrial - 是否为复审
  */
@@ -95,7 +95,6 @@ function getConfig() {
     voteWindowMinutes: 10,
     quickPassCount: 5,
     muteTimeMinutes: 30,
-    feedbackDebounceSeconds: 20,
     reminderIntervalMinutes: 2,
     userDailyLimit: 1,
     adminDailyLimit: 0,
@@ -259,6 +258,60 @@ function getKeyVotePhrase() {
   return phrases[Math.floor(Math.random() * phrases.length)];
 }
 
+/**
+ * 判断投票激烈程度
+ */
+function getFightingLevel(favor, against) {
+  const total = favor + against;
+  if (total === 0) return '无人投票';
+  
+  const diff = Math.abs(favor - against);
+  const ratio = diff / total;
+  
+  if (ratio === 0) return '势均力敌（平票）';
+  if (ratio <= 0.2) return '激烈交锋（票数极为接近）';
+  if (ratio <= 0.4) return '胶着对峙（票数接近）';
+  if (ratio <= 0.6) return '略有优势';
+  if (ratio <= 0.8) return '明显优势';
+  return '一边倒（压倒性优势）';
+}
+
+/**
+ * 生成判决类型描述
+ */
+function getVerdictType(session, total, favor, against, reason, config) {
+  const isRetrial = session.isRetrial;
+  
+  // 快速通过
+  if (!isRetrial && total >= config.quickPassCount && favor > against && reason.includes('阈值')) {
+    return '快速通过';
+  }
+  
+  // 管理员宣判
+  if (reason.includes('管理员')) {
+    return isRetrial ? '复审管理员裁决' : '管理员提前宣判';
+  }
+  
+  // 窗口期结束
+  if (reason.includes('窗口期')) {
+    const diff = Math.abs(favor - against);
+    if (total === 0) return '无人投票自动结案';
+    if (diff === 0) return '平票争议判决';
+    if (diff <= 1) return '激烈票选险胜';
+    if (favor === total || against === total) return '一致通过';
+    return '投票期满判决';
+  }
+  
+  return '正常判决';
+}
+
+/**
+ * 获取被告历史AI总结的Redis Key
+ */
+function getDefendantAISummaryKey(groupId, defendantId) {
+  return `CyberCourt:AISummary:${groupId}:${defendantId}`;
+}
+
 // ==================== AI法官 ====================
 
 async function generateJudgeSummary(session, isGuilty, reason) {
@@ -282,26 +335,69 @@ async function generateJudgeSummary(session, isGuilty, reason) {
     }
     
     const verdictText = isGuilty ? '有罪（禁言）' : '无罪（释放）';
-    const { favor, against } = countVotes(session);
+    const { favor, against, total } = countVotes(session);
     
     const msgStr = extractMessageText(session.defendant.originalMsg);
-    const cleanMsg = msgStr.replace(/\[CQ:[^\]]+\]/g, '[图片/表情]').trim();
+    const cleanMsg = CQ.cleanForDisplay(msgStr);
     
-    const opinions = Object.values(session.votes)
-      .filter(v => v.reason)
-      .map(v => `${v.choice === 1 ? '赞成' : '反对'}方意见："${v.reason}"`)
-      .slice(0, 5)
+    // 统计陪审团意见
+    const allVotes = Object.values(session.votes);
+    const votesWithReason = allVotes.filter(v => v.reason);
+    const votesWithoutReason = allVotes.filter(v => !v.reason);
+    
+    const allOpinions = allVotes
+      .map(v => {
+        const voteType = v.choice === 1 ? '赞成' : '反对';
+        const reason = v.reason ? `："${v.reason}"` : '（未提供理由）';
+        return `${voteType}方 ${v.nickname}${reason}`;
+      })
       .join('\n');
     
-    const userPrompt = `案件信息：
+    // 判断投票激烈程度和判决类型
+    const fightingLevel = getFightingLevel(favor, against);
+    const verdictType = getVerdictType(session, total, favor, against, reason, config);
+    
+    // 获取上次AI总结（如果是复审）
+    let previousSummary = null;
+    if (session.isRetrial) {
+      const summaryKey = getDefendantAISummaryKey(session.groupId, session.defendant.userId);
+      previousSummary = await getKeyObject(summaryKey);
+    }
+    
+    // 构建prompt
+    let userPrompt = `案件信息：
+- 案件类型：${session.isRetrial ? `复审（被告今日第${session.defendantCount}次被起诉，累犯）` : '初审'}
+- 被告：${session.defendant.nickname}
 - 案由：${cleanMsg}
-- 诉状：${session.courtReason || '无'}
-- 投票结果：赞成${favor}票，反对${against}票
+- 诉状：${session.courtReason || '原告未提供诉状'}
+- 投票结果：赞成${favor}票，反对${against}票（共${total}票）
+- 投票激烈度：${fightingLevel}
+- 有理由投票：${votesWithReason.length}票 | 无理由投票：${votesWithoutReason.length}票
 - 判决结果：${verdictText}
 - 判决依据：${reason}
-${opinions ? `\n陪审团意见：\n${opinions}` : ''}
+- 判决方式：${verdictType}`;
 
-请输出100字以内的宣判小结。`;
+    if (isGuilty) {
+      userPrompt += `\n- 禁言时长：${config.muteTimeMinutes}分钟`;
+    }
+
+    if (allOpinions) {
+      userPrompt += `\n\n陪审团完整意见：\n${allOpinions}`;
+    }
+    
+    if (previousSummary) {
+      userPrompt += `\n\n上次判决AI总结：\n${previousSummary.summary}`;
+      userPrompt += `\n上次判决结果：${previousSummary.isGuilty ? '有罪' : '无罪'}`;
+      userPrompt += `\n上次投票：赞成${previousSummary.favor}票，反对${previousSummary.against}票`;
+    }
+
+    userPrompt += `\n\n请输出100字以内的宣判小结。`;
+    
+    if (session.isRetrial && previousSummary) {
+      userPrompt += `\n要求：1. 点出这是复审/累犯 2. 可对比上次和本次的投票差异 3. 结合投票激烈度点评 4. 适度吐槽但保持幽默 5. 用金句收尾`;
+    } else {
+      userPrompt += `\n要求：1. 结合投票激烈度点评 2. 适度吐槽但保持幽默 3. 用金句收尾`;
+    }
 
     const response = await AxiosProxy.post(
       'https://open.bigmodel.cn/api/paas/v4/chat/completions',
@@ -324,7 +420,28 @@ ${opinions ? `\n陪审团意见：\n${opinions}` : ''}
     );
     
     const summary = response.data?.choices?.[0]?.message?.content;
-    return summary ? `\n\n🎭 小爱法官总结：\n${summary.trim()}` : null;
+    
+    if (summary) {
+      // 计算到当天结束的剩余秒数，与 dailyCount 保持一致
+      const now = new Date();
+      const endOfDay = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+      const ttlSeconds = Math.floor((endOfDay - now) / 1000) + 60; // 多加60秒缓冲
+      
+      // 存储本次AI总结供下次复审参考
+      const summaryKey = getDefendantAISummaryKey(session.groupId, session.defendant.userId);
+      await setKeyObject(summaryKey, {
+        summary: summary.trim(),
+        isGuilty,
+        favor,
+        against,
+        total,
+        timestamp: Date.now()
+      }, ttlSeconds);
+      
+      return `\n\n🎭 小爱法官总结：\n${summary.trim()}`;
+    }
+    
+    return null;
   } catch (e) {
     logError('AI法官生成失败:', e.message);
     return null;
@@ -396,6 +513,11 @@ async function generateReminderText(session, favor, against, total, config) {
     prompt += `\n4. 控制在50字以内\n5. 直接输出文案，不要前缀`;
 
     const jwttoken = createJWT(apiKey);
+    if (!jwttoken) {
+      logError('无法创建 JWT token，返回默认催促文案');
+      return '⏰ 时间不等人，请大家抓紧投票！';
+    }
+    
     const { data } = await AxiosProxy.post(
       'https://open.bigmodel.cn/api/paas/v4/chat/completions',
       {
@@ -432,13 +554,9 @@ function formatAnnouncement(session, config) {
     ? msgStr.slice(0, 50) + '...'
     : msgStr;
   
-  const cleanMsg = originalMsgPreview
-    .replace(/\[CQ:[^\]]+\]/g, '[图片/表情]')
-    .trim();
+  const cleanMsg = CQ.cleanForDisplay(originalMsgPreview);
   
-  const retrialTag = session.isRetrial ? '【复审】' : '';
-  
-  let announcement = `${retrialTag}⚖️ ═══ 赛博升堂 ═══ ⚖️
+  let announcement = `⚖️ ═══ 赛博升堂 ═══ ⚖️
 🥁 咚咚咚！！！ 威—— 武—— ！
 
 👨‍⚖️ 被告：${session.defendant.nickname}
@@ -476,14 +594,11 @@ function formatResult(session, favor, against, total, isGuilty, reason, includeM
     ? msgStr.slice(0, 50) + '...'
     : msgStr;
   
-  const cleanMsg = originalMsgPreview
-    .replace(/\[CQ:[^\]]+\]/g, '[图片/表情]')
-    .trim();
+  const cleanMsg = CQ.cleanForDisplay(originalMsgPreview);
   
-  const retrialTag = session.isRetrial ? '【复审】' : '';
   const config = getGroupConfig(session.groupId);
   
-  let msg = `${retrialTag}⚖️ ═══ 审判结果 ═══ ⚖️\n\n`;
+  let msg = `⚖️ ═══ 审判结果 ═══ ⚖️\n\n`;
   msg += `📜 案由：「${cleanMsg}」\n`;
   msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   msg += `📊 投票统计：\n`;
@@ -509,19 +624,17 @@ function formatVoteFeedback(session) {
   const config = getGroupConfig(session.groupId);
   const { favor, against, total } = countVotes(session);
   
-  let reportMsg = `📊 当前票数：✅ 赞成 ${favor} | ❌ 反对 ${against} `;
+  let reportMsg = `📊 当前票数：✅ 赞成 ${favor} | ❌ 反对 ${against}`;
   
-  // 只在非复审时显示快速通过进度
-  if (!session.isRetrial) {
+  // 复审显示管理员裁决提示，非复审显示快速通过进度
+  if (session.isRetrial) {
+    reportMsg += `\n⚠️ 本案为复审，将由管理员做最终裁决`;
+  } else {
     reportMsg += `\n⚡ 快速通过进度：${total}/${config.quickPassCount} 票`;
   }
   
   reportMsg += `\n`;
   reportMsg += formatJuryVotes(session);
-  
-  if (session.isRetrial) {
-    reportMsg += `\n⚠️ 本案为复审，将由管理员做最终裁决`;
-  }
   
   return reportMsg;
 }
@@ -600,22 +713,26 @@ async function endCourt(groupId, reason = '窗口期结束', appendToReport = fa
           log(`禁言执行成功`);
         } catch (e) {
           const errorMsg = `⚠️ 禁言执行失败，请管理员手动处理`;
-          if (!appendToReport) {
-            global.sendGroupMsg(groupId, errorMsg);
-          }
+          global.sendGroupMsg(groupId, errorMsg);
           logError('禁言执行失败:', e.message);
         }
       } else {
         const noPermMsg = `📢 机器人无管理员权限，请管理员手动禁言 ${muteDuration} 分钟`;
-        if (!appendToReport) {
-          global.sendGroupMsg(groupId, noPermMsg);
-        }
+        global.sendGroupMsg(groupId, noPermMsg);
         log(`机器人无管理员权限，无法自动禁言`);
       }
     };
     
     if (appendToReport) {
-      setTimeout(executeMuseAction, 500);
+      setTimeout(async () => {
+        try {
+          await executeMuseAction();
+        } catch (e) {
+          logError('延迟禁言执行异常:', e.message);
+          // 即使延迟执行也需要通知错误
+          global.sendGroupMsg(groupId, `⚠️ 禁言执行异常，请管理员检查并手动处理`);
+        }
+      }, 500);
     } else {
       await executeMuseAction();
     }
@@ -642,9 +759,9 @@ async function handleRetrial(session, favor, against, total, reason) {
   const cleanMsg = msgStr.length > 50
     ? msgStr.slice(0, 50) + '...'
     : msgStr;
-  const cleanMsgDisplay = cleanMsg.replace(/\[CQ:[^\]]+\]/g, '[图片/表情]').trim();
+  const cleanMsgDisplay = CQ.cleanForDisplay(cleanMsg);
   
-  let message = `【复审】⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
+  let message = `⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
   message += `📜 案由：「${cleanMsgDisplay}」\n`;
   message += `👨‍⚖️ 被告：${session.defendant.nickname}\n\n`;
   message += `📊 投票统计：\n`;
@@ -668,6 +785,21 @@ async function handleRetrial(session, favor, against, total, reason) {
   
   // 保存待裁决状态
   if (messageId) {
+    // 设置超时自动释放
+    const timeoutId = setTimeout(async () => {
+      const redisKey = getPendingVerdictKey(session.groupId, messageId);
+      const stillPending = await getKeyObject(redisKey);
+      if (stillPending) {
+        await delKey(redisKey);
+        pendingVerdictMessages.delete(session.groupId);
+        
+        await global.sendGroupMsg(session.groupId, 
+          `⚖️ 复审超时 ⚖️\n管理员未在${timeoutMinutes}分钟内处理\n` +
+          `🛡️ 被告 ${session.defendant.nickname} 已自动释放`
+        );
+      }
+    }, timeoutMinutes * 60 * 1000);
+    
     const pendingData = {
       groupId: session.groupId,
       defendantId: session.defendant.userId,
@@ -678,27 +810,14 @@ async function handleRetrial(session, favor, against, total, reason) {
       favor,
       against,
       total,
-      createTime: Date.now()
+      createTime: Date.now(),
+      timeoutId  // 保存 timeoutId 以便后续清理
     };
     
     const redisKey = getPendingVerdictKey(session.groupId, messageId);
     await setKeyObject(redisKey, pendingData, timeoutMinutes * 60);
     
     pendingVerdictMessages.set(session.groupId, messageId);
-    
-    // 设置超时自动释放
-    setTimeout(async () => {
-      const stillPending = await getKeyObject(redisKey);
-      if (stillPending) {
-        await delKey(redisKey);
-        pendingVerdictMessages.delete(session.groupId);
-        
-        await global.sendGroupMsg(session.groupId, 
-          `【复审超时】⚖️ 管理员未在${timeoutMinutes}分钟内处理\n` +
-          `🛡️ 被告 ${session.defendant.nickname} 已自动释放`
-        );
-      }
-    }, timeoutMinutes * 60 * 1000);
     
     log(`群 ${session.groupId} 复审等待管理员裁决，${timeoutMinutes}分钟后超时`);
   }
@@ -723,7 +842,8 @@ async function handleStartCourt(context) {
   }
   
   // 解析回复的消息，获取被告
-  const rMsgId = /^\[CQ:reply,id=(-?\d+).*\]/.exec(message)?.[1];
+  const replyCode = CQ.findFirst(message, 'reply');
+  const rMsgId = replyCode ? replyCode.get('id') : null;
   if (!rMsgId) {
     log(`用户 ${user_id} 未回复消息`);
     const helpText = `⚖️ 升堂命令格式：\n` +
@@ -736,10 +856,7 @@ async function handleStartCourt(context) {
   }
   
   // 提取诉状（/升堂 后的内容）
-  const pureMsg = message
-    .replace(/^\[CQ:reply,id=-?\d+.*?\]/, '')
-    .replace(/\[CQ:at,qq=\d+.*?\]\s*/g, '')  // 全局匹配移除所有@
-    .trim();
+  const pureMsg = CQ.removeTypes(message, ['reply', 'at']);
   
   const courtReason = pureMsg
     .replace(/^\/升堂\s*/, '')
@@ -817,7 +934,6 @@ async function handleStartCourt(context) {
     },
     courtReason,
     votes: {},
-    lastFeedbackTime: 0,
     lastVoteTime: Date.now(),
     isRetrial,
     defendantCount: defendantCount + 1
@@ -976,8 +1092,71 @@ async function handleEndNow(context) {
   }
   
   // 检查是否有进行中的审判
-  if (courtSessions.has(group_id)) {
-    // 引用管理员的宣判命令消息
+  const session = courtSessions.get(group_id);
+  if (session && session.active) {
+    // 复审直接按投票结果执行判决
+    if (session.isRetrial) {
+      const { favor, against, total } = countVotes(session);
+      const isGuilty = total > 0 && favor > against;
+      
+      // 清理会话
+      session.active = false;
+      if (session.timeout) clearTimeout(session.timeout);
+      if (session.reminderInterval) clearInterval(session.reminderInterval);
+      courtSessions.delete(group_id);
+      
+      const config = getGroupConfig(group_id);
+      
+      if (isGuilty) {
+        // 执行禁言
+        try {
+          const durationSeconds = Math.max(60, config.muteTimeMinutes * 60);
+          await global.bot('set_group_ban', {
+            group_id,
+            user_id: session.defendant.userId,
+            duration: durationSeconds
+          });
+          
+          // 生成AI法官小结
+          const aiSummary = await generateJudgeSummary(session, true, '🔨 管理员宣判');
+          
+          let msg = `⚖️ 复审宣判 ⚖️\n\n`;
+          msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n`;
+          msg += `📊 投票结果：赞成${favor}票，反对${against}票\n`;
+          msg += `⚔️ 判决：有罪\n`;
+          msg += `🔇 禁言${config.muteTimeMinutes}分钟已执行`;
+          
+          if (aiSummary) {
+            msg += aiSummary;
+          }
+          
+          global.replyMsg(context, msg, false, true);
+          log(`复审宣判执行成功: 群${group_id} 被告${session.defendant.userId}`);
+        } catch (e) {
+          logError('复审宣判禁言失败:', e.message);
+          global.replyMsg(context, `⚠️ 禁言执行失败：${e.message}`, false, true);
+        }
+      } else {
+        // 无罪释放
+        const aiSummary = await generateJudgeSummary(session, false, '🔨 管理员宣判');
+        
+        let msg = `⚖️ 复审宣判 ⚖️\n\n`;
+        msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n`;
+        msg += `📊 投票结果：赞成${favor}票，反对${against}票\n`;
+        msg += `🛡️ 判决：无罪，予以释放`;
+        
+        if (aiSummary) {
+          msg += aiSummary;
+        }
+        
+        global.replyMsg(context, msg, false, true);
+        log(`复审宣判: 群${group_id} 被告${session.defendant.userId} 无罪释放`);
+      }
+      
+      return true;
+    }
+    
+    // 非复审的正常宣判流程
     await endCourt(group_id, '🔨 管理员宣判', false, context);
     return true;
   }
@@ -989,6 +1168,11 @@ async function handleEndNow(context) {
     const pendingData = await getKeyObject(redisKey);
     
     if (pendingData) {
+      // 清理定时器
+      if (pendingData.timeoutId) {
+        clearTimeout(pendingData.timeoutId);
+      }
+      
       const config = getGroupConfig(group_id);
       const isGuilty = pendingData.total > 0 && pendingData.favor > pendingData.against;
       
@@ -1056,6 +1240,30 @@ async function handleCancel(context) {
       return global.replyMsg(context, '⚖️ 只有原告或管理员可以撤案 🔨');
     }
     
+    // 回退计数器
+    const config = getGroupConfig(group_id);
+    
+    // 回退被告被起诉次数
+    const defendantKey = getDefendantDailyKey(group_id, session.defendant.userId);
+    const currentDefendantCount = dailyCount.get(defendantKey);
+    if (currentDefendantCount > 0) {
+      dailyCount.set(defendantKey, currentDefendantCount - 1);
+      log(`回退被告 ${session.defendant.userId} 被起诉次数: ${currentDefendantCount} -> ${currentDefendantCount - 1}`);
+    }
+    
+    // 回退原告升堂次数（如果有限制）
+    const prosecutorIsAdmin = await isGroupAdmin(group_id, session.prosecutor.userId);
+    const limit = prosecutorIsAdmin ? config.adminDailyLimit : config.userDailyLimit;
+    
+    if (limit > 0) {
+      const prosecutorKey = `${group_id}_${session.prosecutor.userId}:cyberCourt_prosecutor`;
+      const currentProsecutorCount = dailyCount.get(prosecutorKey);
+      if (currentProsecutorCount > 0) {
+        dailyCount.set(prosecutorKey, currentProsecutorCount - 1);
+        log(`回退原告 ${session.prosecutor.userId} 升堂次数: ${currentProsecutorCount} -> ${currentProsecutorCount - 1}`);
+      }
+    }
+    
     session.active = false;
     if (session.timeout) clearTimeout(session.timeout);
     if (session.reminderInterval) clearInterval(session.reminderInterval);
@@ -1080,13 +1288,18 @@ async function handleCancel(context) {
     const pendingData = await getKeyObject(redisKey);
     
     if (pendingData) {
+      // 清理定时器
+      if (pendingData.timeoutId) {
+        clearTimeout(pendingData.timeoutId);
+      }
+      
       await delKey(redisKey);
       pendingVerdictMessages.delete(group_id);
       
       const cancellerName = context.sender?.card || context.sender?.nickname || String(user_id);
       log(`群 ${group_id} 的复审已被撤销`);
       return global.replyMsg(context, 
-        `【复审撤销】⚖️ 管理员 ${cancellerName} 撤销了对 ${pendingData.defendantName} 的复审\n` +
+        `⚖️ 复审撤销 ⚖️\n管理员 ${cancellerName} 撤销了对 ${pendingData.defendantName} 的复审\n` +
         `🛡️ 被告已释放`
       );
     }
@@ -1121,12 +1334,7 @@ export default async function cyberCourt(context) {
   }
   
   // 去除回复标记和自动@后的纯消息
-  // 1. 先去除 [CQ:reply,...]
-  // 2. 再去除所有 [CQ:at,...] （可能有多个）
-  const pureMsg = message
-    .replace(/^\[CQ:reply,id=-?\d+.*?\]/, '')
-    .replace(/\[CQ:at,qq=\d+.*?\]\s*/g, '')  // 改为全局匹配，去除所有@
-    .trim();
+  const pureMsg = CQ.removeTypes(message, ['reply', 'at']);
   
   // 发起升堂（需要回复消息）- 必须以/开头
   if (pureMsg === '/升堂' || pureMsg.startsWith('/升堂 ')) {

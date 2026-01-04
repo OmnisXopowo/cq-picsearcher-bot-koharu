@@ -226,4 +226,85 @@ export default class CQ {
   static record(file) {
     return new CQ('record', { file }).toString();
   }
+
+  /**
+   * 从消息中提取指定类型的第一个 CQ 码
+   * @param {string} message 消息字符串
+   * @param {string} type CQ 类型
+   * @returns {CQ|null}
+   */
+  static findFirst(message, type) {
+    const codes = CQ.from(message).filter(cq => cq.type === type);
+    return codes.length > 0 ? codes[0] : null;
+  }
+
+  /**
+   * 移除指定类型的 CQ 码
+   * @param {string} message 消息字符串
+   * @param {string[]} types 要移除的 CQ 类型数组
+   * @returns {string}
+   */
+  static removeTypes(message, types) {
+    if (!message || !types || types.length === 0) return message;
+    
+    const pattern = types.map(t => 
+      `\\[CQ:${t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[^\\]]*\\]`
+    ).join('|');
+    
+    return message.replace(new RegExp(pattern, 'g'), '').replace(/\s+/g, ' ').trim();
+  }
+
+  /**
+   * 清理消息用于显示（将 CQ 码转为文本说明）
+   * 参考 messageContextManager._cleanMessage 实现细化处理
+   * @param {string} message 消息字符串
+   * @param {object} [options] 自定义替换选项
+   * @returns {string}
+   */
+  static cleanForDisplay(message, options = {}) {
+    if (!message) return '';
+    
+    const defaults = {
+      image: '[图片]',
+      face: '[表情]',
+      at: '[@]',
+      atAll: '[@全体成员]',
+      record: '[语音]',
+      video: '[视频]',
+      reply: '',  // 回复码通常移除
+      share: '[链接分享]',
+      music: '[音乐分享]',
+      redbag: '[红包]',
+      poke: '[戳一戳]',
+      forward: '[聊天记录]',
+      xml: '[卡片消息]',
+      json: '[卡片消息]',
+      default: ''  // 其他未知类型
+    };
+    
+    const map = { ...defaults, ...options };
+    
+    const cleaned = message
+      // 先处理特殊的 @全体成员
+      .replace(/\[CQ:at,qq=all[^\]]*\]/g, map.atAll)
+      // 再处理各种 CQ 码
+      .replace(/\[CQ:image[^\]]*\]/g, map.image)
+      .replace(/\[CQ:face[^\]]*\]/g, map.face)
+      .replace(/\[CQ:at[^\]]*\]/g, map.at)
+      .replace(/\[CQ:record[^\]]*\]/g, map.record)
+      .replace(/\[CQ:video[^\]]*\]/g, map.video)
+      .replace(/\[CQ:reply[^\]]*\]/g, map.reply)
+      .replace(/\[CQ:share[^\]]*\]/g, map.share)
+      .replace(/\[CQ:music[^\]]*\]/g, map.music)
+      .replace(/\[CQ:redbag[^\]]*\]/g, map.redbag)
+      .replace(/\[CQ:poke[^\]]*\]/g, map.poke)
+      .replace(/\[CQ:forward[^\]]*\]/g, map.forward)
+      .replace(/\[CQ:xml[^\]]*\]/g, map.xml)
+      .replace(/\[CQ:json[^\]]*\]/g, map.json)
+      // 最后处理其他未知 CQ 码
+      .replace(/\[CQ:[^\]]+\]/g, map.default);
+    
+    // 清理多余的空白
+    return cleaned.replace(/\s+/g, ' ').trim();
+  }
 }
