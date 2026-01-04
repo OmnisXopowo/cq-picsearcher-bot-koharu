@@ -20,7 +20,6 @@ import AxiosProxy from '../../utils/axiosProxy.mjs';
 import CQ from '../../utils/CQcode.mjs';
 import dailyCount from '../../utils/dailyCount.mjs';
 import { getKeyObject, setKeyObject, delKey } from '../../utils/redisClient.mjs';
-import { sleep } from '../../utils/sleep.mjs';
 import { createJWT } from '../AImodule/auth.mjs';
 
 // 日志前缀
@@ -56,21 +55,6 @@ function extractMessageText(msgObj) {
   }
   
   return String(msgObj || '');
-}
-
-/**
- * 清理消息中的CQ码，替换为中文描述
- */
-function cleanMessageCQCode(text) {
-  if (!text) return text;
-  
-  return String(text)
-    .replace(/\[CQ:image[^\]]*\]/g, '[图片]')
-    .replace(/\[CQ:face[^\]]*\]/g, '[表情]')
-    .replace(/\[CQ:record[^\]]*\]/g, '[语音]')
-    .replace(/\[CQ:video[^\]]*\]/g, '[视频]')
-    .replace(/\[CQ:at,qq=\d+(?:,name=[^\]]*)?(?:,text=[^\]]*)?/g, '[')
-    .replace(/\[CQ:[^\]]*\]/g, '[消息]');
 }
 
 /**
@@ -373,64 +357,6 @@ function shouldSendReminder(session, config) {
   }
   
   // 距离上次播报已超过2分钟，检查是否有新群聊消息
-  const timeSinceLastGroupMsg = now - session.lastGroupMsgTime;
-  
-  // 只有当播报后群内有新消息时，才开始计时
-  // 检查群内最后消息是否在上次播报之后
-  if (session.lastGroupMsgTime > session.lastReminderMsgTime) {
-    // 有新消息，发送播报
-    return { shouldSend: true, reason: '有新群聊消息且满足间隔' };
-  }
-  
-  // 如果上次播报后群内没有新消息，则不发送（避免刷屏）
-  return { shouldSend: false, reason: '等待群内有新消息' };
-}
-
-/**
- * 格式化倒计时
- */
-function formatCountdown(remainingMs) {
-  const totalSeconds = Math.ceil(remainingMs / 1000);
-  const minutes = Math.floor(totalSeconds / 60);
-  const seconds = totalSeconds % 60;
-  
-  if (minutes > 0) {
-    return `${minutes}分${seconds}秒`;
-  }
-  return `${seconds}秒`;
-}
-
-/**
- * 判断是否应该发送播报
- * @returns {Object} { shouldSend: boolean, reason: string }
- */
-function shouldSendReminder(session, config) {
-  const now = Date.now();
-  const endTime = session.startTime + session.duration;
-  const remainingTime = endTime - now;
-  const reminderInterval = (config.reminderIntervalMinutes || 2) * 60 * 1000;
-  
-  // 如果剩余时间少于1分钟，检查是否应该强制发送最后一次播报
-  if (remainingTime < 60 * 1000) {
-    // 必须距离上次播报超过催促间隔才发送最后一次
-    const timeSinceLastReminder = now - session.lastReminderMsgTime;
-    if (timeSinceLastReminder >= reminderInterval) {
-      return { shouldSend: true, reason: '最后1分钟', isLastReminder: true };
-    }
-    return { shouldSend: false, reason: '上次播报不足2分钟，等待' };
-  }
-  
-  // 正常播报逻辑：计算距离上次播报是否已超过2分钟
-  const timeSinceLastReminder = now - session.lastReminderMsgTime;
-  
-  // 如果距离上次播报未达到2分钟，不发送
-  if (timeSinceLastReminder < reminderInterval) {
-    return { shouldSend: false, reason: '距上次播报不足2分钟' };
-  }
-  
-  // 距离上次播报已超过2分钟，检查是否有新群聊消息
-  const timeSinceLastGroupMsg = now - session.lastGroupMsgTime;
-  
   // 只有当播报后群内有新消息时，才开始计时
   // 检查群内最后消息是否在上次播报之后
   if (session.lastGroupMsgTime > session.lastReminderMsgTime) {
@@ -469,7 +395,6 @@ async function generateJudgeSummary(session, isGuilty, reason) {
     
     const msgStr = extractMessageText(session.defendant.originalMsg);
     const cleanMsg = CQ.cleanForDisplay(msgStr);
-    const cleanMsg = cleanMessageCQCode(msgStr);
     
     // 统计陪审团意见
     const allVotes = Object.values(session.votes);
@@ -685,17 +610,13 @@ function formatAnnouncement(session, config) {
     ? msgStr.slice(0, 50) + '...'
     : msgStr;
   
-  const cleanMsg = CQ.cleanForDisplay(originalMsgPreview);
-  const cleanedMsg = cleanMessageCQCode(msgStr);
-  const originalMsgPreview = cleanedMsg.length > 50
-    ? cleanedMsg.slice(0, 50) + '...'
-    : cleanedMsg;
+  const cleanedMsg = CQ.cleanForDisplay(originalMsgPreview);
   
   let announcement = `⚖️ ═══ 赛博升堂 ═══ ⚖️
 🥁 咚咚咚！！！ 威—— 武—— ！
 
 👨‍⚖️ 被告：${session.defendant.nickname}
-📜 案由：「${originalMsgPreview}」
+📜 案由：「${cleanedMsg}」
 👨‍💼 原告：${session.prosecutor.nickname}
 ⏰ 投票时间：${config.voteWindowMinutes} 分钟`;
 
@@ -730,10 +651,6 @@ function formatResult(session, favor, against, total, isGuilty, reason, includeM
     : msgStr;
   
   const cleanMsg = CQ.cleanForDisplay(originalMsgPreview);
-  const cleanedMsg = cleanMessageCQCode(msgStr);
-  const originalMsgPreview = cleanedMsg.length > 50
-    ? cleanedMsg.slice(0, 50) + '...'
-    : cleanedMsg;
   
   const config = getGroupConfig(session.groupId);
   
@@ -899,10 +816,6 @@ async function handleRetrial(session, favor, against, total, reason) {
     ? msgStr.slice(0, 50) + '...'
     : msgStr;
   const cleanMsgDisplay = CQ.cleanForDisplay(cleanMsg);
-  const cleanedMsg = cleanMessageCQCode(msgStr);
-  const originalMsgPreview = cleanedMsg.length > 50
-    ? cleanedMsg.slice(0, 50) + '...'
-    : cleanedMsg;
   
   let message = `⚖️ ═══ 投票结束 ═══ ⚖️\n\n`;
   message += `📜 案由：「${cleanMsgDisplay}」\n`;
@@ -931,27 +844,10 @@ async function handleRetrial(session, favor, against, total, reason) {
   // 保存待裁决状态
   // 即使 messageId 为空，也应该保存状态（使用唯一标识符）
   const finalMessageId = messageId || `retrial_${session.groupId}_${Date.now()}`;
-  
-  const pendingData = {
-    groupId: session.groupId,
-    defendantId: session.defendant.userId,
-    defendantName: session.defendant.nickname,
-    prosecutorId: session.prosecutor.userId,
-    originalMsg: session.defendant.originalMsg,
-    courtReason: session.courtReason,
-    favor,
-    against,
-    total,
-    createTime: Date.now()
-  };
-  
   const redisKey = getPendingVerdictKey(session.groupId, finalMessageId);
-  await setKeyObject(redisKey, pendingData, timeoutMinutes * 60);
-  
-  pendingVerdictMessages.set(session.groupId, finalMessageId);
   
   // 设置超时自动释放
-  setTimeout(async () => {
+  const timeoutId = setTimeout(async () => {
     const stillPending = await getKeyObject(redisKey);
     if (stillPending) {
       await delKey(redisKey);
@@ -963,6 +859,24 @@ async function handleRetrial(session, favor, against, total, reason) {
       );
     }
   }, timeoutMinutes * 60 * 1000);
+  
+  const pendingData = {
+    groupId: session.groupId,
+    defendantId: session.defendant.userId,
+    defendantName: session.defendant.nickname,
+    prosecutorId: session.prosecutor.userId,
+    originalMsg: session.defendant.originalMsg,
+    courtReason: session.courtReason,
+    favor,
+    against,
+    total,
+    createTime: Date.now(),
+    timeoutId  // 保存 timeoutId 以便后续清理
+  };
+  
+  await setKeyObject(redisKey, pendingData, timeoutMinutes * 60);
+  
+  pendingVerdictMessages.set(session.groupId, finalMessageId);
   
   log(`群 ${session.groupId} 复审等待管理员裁决，已保存待裁决状态，${timeoutMinutes}分钟后超时`);
   }
@@ -1080,7 +994,6 @@ async function handleStartCourt(context) {
     },
     courtReason,
     votes: {},
-    lastFeedbackTime: 0,
     lastVoteTime: now,
     isRetrial,
     defendantCount: defendantCount + 1,
@@ -1140,7 +1053,7 @@ async function handleStartCourt(context) {
       
       // 获取案由信息
       const msgStr = extractMessageText(currentSession.defendant.originalMsg);
-      const cleanedMsg = cleanMessageCQCode(msgStr);
+      const cleanedMsg = CQ.cleanForDisplay(msgStr);
       const caseInfo = cleanedMsg.length > 40
         ? cleanedMsg.slice(0, 40) + '...'
         : cleanedMsg;
