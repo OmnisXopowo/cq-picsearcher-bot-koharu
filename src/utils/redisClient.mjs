@@ -101,32 +101,26 @@ export async function getKeyValue(key, defaultValue) {
     console.log(`[RDS read]${key}:${value}`);
     return value;
   } else {
-    return defaultValue || value;
+    return defaultValue !== undefined ? defaultValue : value;
   }
 }
 
 export async function setKeyObject(key, value, expiryInSeconds) {
-
   const obj = JSON.stringify(value);
-  // 检查是否提供了过期时间
-  if (expiryInSeconds !== undefined) {
-    // 如果提供了过期时间，使用SET命令的EX参数设置过期时间
-    redis.set(key, obj, 'EX', expiryInSeconds)
-      .then(() => {
-        console.log(`[RDS save]${key}:${obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
-      })
-      .catch((err) => {
-        console.error(`[RDS save]保存失败 ${key}:${obj} -${err}`);
-      });
-  } else {
-    // 如果没有提供过期时间，只设置键值
-    redis.set(key, obj)
-      .then(() => {
-        console.log(`[RDS save]${key}:${obj}`);
-      })
-      .catch((err) => {
-        console.error(`[RDS save]保存失败 ${key}:${obj} -${err}`);
-      });
+  try {
+    // 检查是否提供了过期时间
+    if (expiryInSeconds !== undefined) {
+      // 如果提供了过期时间，使用SET命令的EX参数设置过期时间
+      await redis.set(key, obj, 'EX', expiryInSeconds);
+      console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
+    } else {
+      // 如果没有提供过期时间，只设置键值
+      await redis.set(key, obj);
+      console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
+    }
+  } catch (err) {
+    console.error(`[RDS save]保存失败 ${key}: ${err}`);
+    throw err; // 让调用方知道失败
   }
 }
 
@@ -137,12 +131,16 @@ export async function setKeyObject(key, value, expiryInSeconds) {
  * @returns {*|null} 若设置defaultValue则空缓存返回defaultValue，否则返回null
  */
 export async function getKeyObject(key, defaultValue) {
-  const value = await redis.get(key);
-  if (value) {
-    console.log(`[RDS read]${key}:${value}`);
-    return JSON.parse(value);
-  } else {
-    return defaultValue || JSON.parse(value);
+  try {
+    const value = await redis.get(key);
+    if (value) {
+      console.log(`[RDS read]${key}:${value.length > 100 ? value.substring(0, 100) + '...' : value}`);
+      return JSON.parse(value);
+    }
+    return defaultValue !== undefined ? defaultValue : null;
+  } catch (err) {
+    console.error(`[RDS read]${key} 解析失败: ${err}`);
+    return defaultValue !== undefined ? defaultValue : null;
   }
 }
 
