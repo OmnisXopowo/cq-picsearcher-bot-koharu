@@ -100,6 +100,8 @@ const getMatchAndConfig = async context => {
         'prependMessages',
         'nickname',
         'apiKey',
+        'kimiApiKey',
+        'qwenVlApiKey',
         'blackGroup',
         'whiteGroup',
         'systemRole',
@@ -114,7 +116,7 @@ const callKimiAPI = (prompt, config, context) => {
   const modelName = 'kimiai';
 
   const client = new OpenAI({
-    apiKey: "sk-aIXe2E8FXCkFzmUkk9j0Q9hgY466Vctw2Y5qEarwelQdWL6L",
+    apiKey: config.kimiApiKey,
     baseURL: "https://api.moonshot.cn/v1",
   });
 
@@ -401,7 +403,7 @@ const callQwenVLAPI = (prompt, config, context, imgUrls) => {
     const { debug } = global.config.bot;
 
     const openai = new OpenAI({
-      apiKey: "sk-9d41575ec88141598673d44e1793d760",
+      apiKey: config.qwenVlApiKey,
       baseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
     });
 
@@ -466,8 +468,9 @@ export default async context => {
     if (whiteGroup.size && !whiteGroup.has(context.group_id)) return true;
   }
 
-  if (!config.apiKey) {
-    global.replyMsg(context, '未配置 APIKey', false, true);
+  // 检查必需的 API keys
+  if (!config.kimiApiKey && !config.qwenVlApiKey) {
+    global.replyMsg(context, '未配置 Kimi 或 QwenVL APIKey', false, true);
     return true;
   }
 
@@ -486,9 +489,19 @@ export default async context => {
 
   let completion;
   if (imgUrls) {
+    // 使用 QwenVL API 处理图像
+    if (!config.qwenVlApiKey) {
+      global.replyMsg(context, '未配置 QwenVL APIKey，无法处理图像', false, true);
+      return true;
+    }
     // completion = await callGML4VAPI(prompt, config, context, imgUrls);
     completion = await callQwenVLAPI(prompt, config, context, imgUrls);
   } else {
+    // 使用 Kimi API 处理文本
+    if (!config.kimiApiKey) {
+      global.replyMsg(context, '未配置 Kimi APIKey，无法处理文本', false, true);
+      return true;
+    }
     completion = await callKimiAPI(prompt, config, context);
   }
   global.replyMsg(context, completion, false, true);

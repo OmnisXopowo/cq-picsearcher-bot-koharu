@@ -412,6 +412,10 @@
       "prependMessages": [],
       // CharacterGLM APIKey
       "apiKey": "",
+      // Kimi API Key（Moonshot API）
+      "kimiApiKey": "",
+      // QwenVL API Key（阿里云 DashScope API）
+      "qwenVlApiKey": "",
       // 每名用户每日使用次数限制，0 则无限制
       "userDailyLimit": 0,
       // 群组黑名单
