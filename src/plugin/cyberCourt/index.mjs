@@ -177,22 +177,49 @@ async function isImmune(groupId, userId) {
     return true;
   }
   
-  // 检查群角色
-  if (config.immuneRoles?.length > 0) {
-    try {
-      const { data } = await global.bot('get_group_member_info', {
-        group_id: groupId,
-        user_id: userId
-      });
-      if (data && config.immuneRoles.includes(data.role)) {
-        return true;
-      }
-    } catch (e) {
-      logError('检查豁免状态失败:', e.message);
-    }
-  }
+  // 注意：管理员和群主不再自动豁免，可以被升堂投票
+  // 但执行禁言时会根据身份做特殊处理（呼叫群主或发送搞笑消息）
   
   return false;
+}
+
+/**
+ * 获取用户在群中的角色
+ * @returns {'owner'|'admin'|'member'|null}
+ */
+async function getGroupMemberRole(groupId, userId) {
+  try {
+    const { data } = await global.bot('get_group_member_info', {
+      group_id: groupId,
+      user_id: userId
+    });
+    return data?.role || null;
+  } catch (e) {
+    logError('获取群成员角色失败:', e.message);
+    return null;
+  }
+}
+
+/**
+ * 生成管理员/群主无法禁言时的搞笑文案
+ */
+function getAdminMuteFailMessage(role, nickname, muteMinutes) {
+  if (role === 'owner') {
+    const ownerPhrases = [
+      `⚖️ 判决：有罪！\n\n然而...被告 ${nickname} 是群主大人 👑\n\n🤷 本法庭建议：\n1. 请能人异士联系腾讯客服\n2. 或祈祷群主良心发现自行闭麦\n3. 实在不行...大家一起念经超度？\n\n📜 法官批注：天子犯法，庶民只能干瞪眼`,
+      `⚖️ 有罪！禁言${muteMinutes}分钟！\n\n等等...${nickname} 是群主？👑\n\n😅 这...这超出了本法庭的管辖范围\n💡 建议被告自觉面壁思过\n🙏 或者哪位大神帮忙找腾讯开后门？\n\n📜 法官叹息：真是法外狂徒张三本三`,
+      `⚖️ 陪审团一致裁定：有罪！\n\n📢 执行禁言...\n❌ 执行失败！\n\n原因：被告 ${nickname} 是本群至高无上的群主 👑\n\n🎭 建议处置方案：\n• 全群复读「群主有罪」\n• 等待天降正义\n• 玄学退群重进（大概率被踢）\n\n📜 法官无奈：权力使人腐败，群主使人无奈`
+    ];
+    return ownerPhrases[Math.floor(Math.random() * ownerPhrases.length)];
+  }
+  
+  // admin
+  const adminPhrases = [
+    `⚖️ 判决：有罪！\n\n⚠️ 但被告 ${nickname} 是本群管理员\n本法庭无权对管理员执行禁言\n\n📢 @群主 请出面主持公道！\n建议对该管理员禁言 ${muteMinutes} 分钟\n\n📜 法官批注：管理员也要遵纪守法啊喂！`,
+    `⚖️ 有罪！应禁言${muteMinutes}分钟！\n\n😱 等等，${nickname} 是管理员？！\n\n本法庭权限不足，特此呈请：\n📢 @群主 群主大人明鉴！\n您的管理员犯事了，请亲自处理~\n\n📜 法官吐槽：监守自盗是吧`,
+    `⚖️ 陪审团裁定：有罪！\n\n🚫 禁言执行失败\n原因：被告 ${nickname} 持有管理员护身符\n\n📢 紧急呼叫 @群主\n请对您的小弟进行制裁！\n建议刑期：${muteMinutes}分钟\n\n📜 法官碎碎念：请群主好好管教一下`
+  ];
+  return adminPhrases[Math.floor(Math.random() * adminPhrases.length)];
 }
 
 async function checkBotAdminPermission(groupId) {
@@ -766,10 +793,26 @@ async function endCourt(groupId, reason = '窗口期结束', appendToReport = fa
   
   const config = getGroupConfig(groupId);
   
+  // 提前检查被告角色，用于判断是否需要特殊处理
+  let defendantRole = null;
+  if (isGuilty) {
+    defendantRole = await getGroupMemberRole(groupId, session.defendant.userId);
+  }
+  const isDefendantPrivileged = defendantRole === 'owner' || defendantRole === 'admin';
+  
   // 生成AI法官小结
   const aiSummary = await generateJudgeSummary(session, isGuilty, reason);
   
-  let resultMsg = formatResult(session, favor, against, total, isGuilty, reason, appendToReport && isGuilty);
+  // 如果被告是管理员/群主且有罪，不显示"禁言已执行"
+  const shouldShowMuteInfo = appendToReport && isGuilty && !isDefendantPrivileged;
+  let resultMsg = formatResult(session, favor, against, total, isGuilty, reason, shouldShowMuteInfo);
+  
+  // 如果被告是管理员/群主且有罪，追加特殊处理消息
+  if (isGuilty && isDefendantPrivileged) {
+    const specialMsg = getAdminMuteFailMessage(defendantRole, session.defendant.nickname, config.muteTimeMinutes);
+    resultMsg += `\n\n${'━'.repeat(8)}\n${specialMsg}`;
+  }
+  
   if (aiSummary) {
     resultMsg += aiSummary;
   }
@@ -782,8 +825,8 @@ async function endCourt(groupId, reason = '窗口期结束', appendToReport = fa
     }
   }
   
-  // 执行禁言
-  if (isGuilty) {
+  // 执行禁言（仅对普通成员）
+  if (isGuilty && !isDefendantPrivileged) {
     const executeMuseAction = async () => {
       const hasAdminPerm = await checkBotAdminPermission(groupId);
       const muteDuration = config.muteTimeMinutes;
@@ -1218,33 +1261,53 @@ async function handleEndNow(context) {
       const config = getGroupConfig(group_id);
       
       if (isGuilty) {
-        // 执行禁言
-        try {
-          const durationSeconds = Math.max(60, config.muteTimeMinutes * 60);
-          await global.bot('set_group_ban', {
-            group_id,
-            user_id: session.defendant.userId,
-            duration: durationSeconds
-          });
-          
+        // 检查被告是否为管理员或群主
+        const defendantRole = await getGroupMemberRole(group_id, session.defendant.userId);
+        if (defendantRole === 'owner' || defendantRole === 'admin') {
           // 生成AI法官小结
           const aiSummary = await generateJudgeSummary(session, true, '🔨 管理员宣判');
+          const specialMsg = getAdminMuteFailMessage(defendantRole, session.defendant.nickname, config.muteTimeMinutes);
           
           let msg = `⚖️ 复审宣判 ⚖️\n\n`;
           msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n`;
-          msg += `📊 投票结果：赞成${favor}票，反对${against}票\n`;
-          msg += `⚔️ 判决：有罪\n`;
-          msg += `🔇 禁言${config.muteTimeMinutes}分钟已执行`;
+          msg += `📊 投票结果：赞成${favor}票，反对${against}票\n\n`;
+          msg += specialMsg;
           
           if (aiSummary) {
             msg += aiSummary;
           }
           
           global.replyMsg(context, msg, false, true);
-          log(`复审宣判执行成功: 群${group_id} 被告${session.defendant.userId}`);
-        } catch (e) {
-          logError('复审宣判禁言失败:', e.message);
-          global.replyMsg(context, `⚠️ 禁言执行失败：${e.message}`, false, true);
+          log(`复审宣判: 被告 ${session.defendant.userId} 是${defendantRole}，无法执行禁言`);
+        } else {
+          // 执行禁言
+          try {
+            const durationSeconds = Math.max(60, config.muteTimeMinutes * 60);
+            await global.bot('set_group_ban', {
+              group_id,
+              user_id: session.defendant.userId,
+              duration: durationSeconds
+            });
+            
+            // 生成AI法官小结
+            const aiSummary = await generateJudgeSummary(session, true, '🔨 管理员宣判');
+            
+            let msg = `⚖️ 复审宣判 ⚖️\n\n`;
+            msg += `👨‍⚖️ 被告：${session.defendant.nickname}\n`;
+            msg += `📊 投票结果：赞成${favor}票，反对${against}票\n`;
+            msg += `⚔️ 判决：有罪\n`;
+            msg += `🔇 禁言${config.muteTimeMinutes}分钟已执行`;
+            
+            if (aiSummary) {
+              msg += aiSummary;
+            }
+            
+            global.replyMsg(context, msg, false, true);
+            log(`复审宣判执行成功: 群${group_id} 被告${session.defendant.userId}`);
+          } catch (e) {
+            logError('复审宣判禁言失败:', e.message);
+            global.replyMsg(context, `⚠️ 禁言执行失败：${e.message}`, false, true);
+          }
         }
       } else {
         // 无罪释放
@@ -1285,28 +1348,44 @@ async function handleEndNow(context) {
     const isGuilty = retrial.total > 0 && retrial.favor > retrial.against;
     
     if (isGuilty) {
-      // 执行禁言
-      try {
-        const durationSeconds = Math.max(60, config.muteTimeMinutes * 60);
-        await global.bot('set_group_ban', {
-          group_id,
-          user_id: retrial.defendantId,
-          duration: durationSeconds
-        });
+      // 检查被告是否为管理员或群主
+      const defendantRole = await getGroupMemberRole(group_id, retrial.defendantId);
+      if (defendantRole === 'owner' || defendantRole === 'admin') {
+        const specialMsg = getAdminMuteFailMessage(defendantRole, retrial.defendantName, config.muteTimeMinutes);
         
         global.replyMsg(context, 
           `【复审宣判】⚖️ 管理员已执行宣判\n` +
           `👨‍⚖️ 被告：${retrial.defendantName}\n` +
-          `📊 投票结果：赞成${retrial.favor}票，反对${retrial.against}票\n` +
-          `⚔️ 判决：有罪\n` +
-          `🔇 禁言${config.muteTimeMinutes}分钟已执行`, 
+          `📊 投票结果：赞成${retrial.favor}票，反对${retrial.against}票\n\n` +
+          specialMsg, 
           false, true
         );
         
-        log(`复审宣判执行成功: 群${group_id} 被告${retrial.defendantId}`);
-      } catch (e) {
-        logError('复审宣判禁言失败:', e.message);
-        global.replyMsg(context, `⚠️ 禁言执行失败：${e.message}`, false, true);
+        log(`复审宣判: 被告 ${retrial.defendantId} 是${defendantRole}，无法执行禁言`);
+      } else {
+        // 执行禁言
+        try {
+          const durationSeconds = Math.max(60, config.muteTimeMinutes * 60);
+          await global.bot('set_group_ban', {
+            group_id,
+            user_id: retrial.defendantId,
+            duration: durationSeconds
+          });
+          
+          global.replyMsg(context, 
+            `【复审宣判】⚖️ 管理员已执行宣判\n` +
+            `👨‍⚖️ 被告：${retrial.defendantName}\n` +
+            `📊 投票结果：赞成${retrial.favor}票，反对${retrial.against}票\n` +
+            `⚔️ 判决：有罪\n` +
+            `🔇 禁言${config.muteTimeMinutes}分钟已执行`, 
+            false, true
+          );
+          
+          log(`复审宣判执行成功: 群${group_id} 被告${retrial.defendantId}`);
+        } catch (e) {
+          logError('复审宣判禁言失败:', e.message);
+          global.replyMsg(context, `⚠️ 禁言执行失败：${e.message}`, false, true);
+        }
       }
     } else {
       global.replyMsg(context, 
