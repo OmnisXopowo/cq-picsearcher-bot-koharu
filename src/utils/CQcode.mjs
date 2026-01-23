@@ -290,7 +290,13 @@ export default class CQ {
       // 再处理各种 CQ 码
       .replace(/\[CQ:image[^\]]*\]/g, map.image)
       .replace(/\[CQ:face[^\]]*\]/g, map.face)
-      .replace(/\[CQ:at[^\]]*\]/g, map.at)
+      // 处理@时保留昵称：[CQ:at,qq=123,name=xxx] -> [@xxx]
+      .replace(/\[CQ:at,qq=([^,\]]+)(?:,name=([^\]]+))?[^\]]*\]/g, (match, qq, name) => {
+        if (name) {
+          return `[@${name}]`;
+        }
+        return map.at;
+      })
       .replace(/\[CQ:record[^\]]*\]/g, map.record)
       .replace(/\[CQ:video[^\]]*\]/g, map.video)
       .replace(/\[CQ:reply[^\]]*\]/g, map.reply)
