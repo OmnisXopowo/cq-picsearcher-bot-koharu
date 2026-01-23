@@ -326,6 +326,7 @@ async function commonHandle(e, context) {
   if (/^\d+$/.test(context.message)) {
     try {
       // 检查是否是ehentai选择回复，通过最近的推本消息查找
+      if (!global.redis) return false;
       const recentMsgIds = await global.redis.keys(`tbSelect:${context.group_id}:*`);
       if (recentMsgIds.length > 0) {
         // 按时间排序，获取最新的消息
