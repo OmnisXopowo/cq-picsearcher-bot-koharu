@@ -74,20 +74,59 @@ async function requestWithFallback(method, instance, url, data, config) {
 }
 
 /**
- * 专用的下载方法：用于图片预下载场景，支持使用本地 HTTP 代理 (127.0.0.1:7890) 或不使用代理。
+ * 专用的下载方法：用于图片预下载场景，支持多代理故障转移。
  * @param {string} url
  * @param {{useProxy?: boolean, config?: object}} opts
  * @returns {Promise<import('axios').AxiosResponse>}
  */
 async function download(url, opts = {}) {
   const { useProxy = true, config = {} } = opts;
-  if (useProxy) {
-    // 创建临时 axios 实例以使用本地 HTTP 代理，保持 responseType 可被覆盖
-    const tmp = Axios.create({ proxy: { host: '127.0.0.1', port: 7890, protocol: 'http' } });
-    return requestWithFallback('get', tmp, url, undefined, { ...config, responseType: 'arraybuffer' });
+  
+  if (!useProxy) {
+    // 不使用代理则使用共享 client
+    return requestWithFallback('get', client, url, undefined, { ...config, responseType: 'arraybuffer' });
   }
-  // 不使用本地代理则使用共享 client
-  return requestWithFallback('get', client, url, undefined, { ...config, responseType: 'arraybuffer' });
+
+  // 获取代理列表配置，默认使用 7890 和 7891
+  const proxies = global.config?.bot?.downloadProxies || [
+    { host: '127.0.0.1', port: 7890, protocol: 'http' },
+    { host: '127.0.0.1', port: 7891, protocol: 'http' }
+  ];
+  const timeout = global.config?.bot?.proxyTimeout || 15000;
+
+  // 依次尝试每个代理
+  let lastError = null;
+  for (let i = 0; i < proxies.length; i++) {
+    const proxyConfig = proxies[i];
+    try {
+      console.log(`[图片下载-尝试代理${i + 1}/${proxies.length}] ${proxyConfig.protocol}://${proxyConfig.host}:${proxyConfig.port}`);
+      
+      const tmp = Axios.create({ 
+        proxy: proxyConfig,
+        timeout
+      });
+      
+      const response = await requestWithFallback('get', tmp, url, undefined, { 
+        ...config,
+        responseType: 'arraybuffer',
+        timeout
+      });
+      
+      console.log(`[图片下载-代理${i + 1}成功]`);
+      return response;
+    } catch (error) {
+      lastError = error;
+      console.warn(`[图片下载-代理${i + 1}失败] ${error.message}`);
+      
+      // 如果不是最后一个代理，继续尝试下一个
+      if (i < proxies.length - 1) {
+        continue;
+      }
+    }
+  }
+
+  // 所有代理都失败，抛出最后一个错误
+  throw lastError;
 }
 
 // 针对 client/cfClient 的便捷 get/post 导出函数

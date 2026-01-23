@@ -107,6 +107,13 @@
     "groupForwardSearchResult": true,
     // 大部分请求所使用的代理，支持 http(s):// 和 socks://
     "proxy": "",
+    // 图片下载代理列表（用于故障转移，按优先级排序依次尝试）
+    "downloadProxies": [
+      { "host": "127.0.0.1", "port": 7890, "protocol": "http" },
+      { "host": "127.0.0.1", "port": 7891, "protocol": "http" }
+    ],
+    // 图片下载代理超时时间（毫秒）
+    "proxyTimeout": 15000,
     // 是否忽略QQ官方机器人 (2854196300 ≤ qq ≤ 2854216399)
     "ignoreOfficialBot": true,
     // Canvas 库选择，可选值 ["auto", "@napi-rs/canvas", "canvas"] 详见 wiki

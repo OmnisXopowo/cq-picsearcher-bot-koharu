@@ -49,46 +49,69 @@ export async function getContextFromUrl(context) {
         }
     }
 
-
-
-
+    let snSimilarity = null;
+    let iqdbSimilarity = null;
+    
     if (hasImage(context.message)) {
-        Url = await ArchivedImg(context);
+        // 图片搜索和入库在 ArchivedImg 中完成
+        const archiveResult = await ArchivedImg(context);
         isImg = true;
-    }
+        
+        // 如果有成功入库的结果，直接返回 true（已处理完成）
+        if (archiveResult && archiveResult.hasResult) {
+            return { type: '_processed' }; // 特殊标记，表示已处理
+        }
+        
+        // 没有匹配结果时，记录相似度用于显示
+        if (archiveResult) {
+            snSimilarity = archiveResult.snSimilarity;
+            iqdbSimilarity = archiveResult.iqdbSimilarity;
+        }
+    } else {
+        // 非图片消息，直接解析URL
+        const cleanedUrl = Url.replace('/收藏', '').replace(/^\/post/, '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
 
-    const cleanedUrl = Url.replace('/收藏', '').replace(/^\/post/, '').trim().replace(/[\u200B-\u200D\uFEFF]/g, ''); // 去除零宽字符
-
-    // Danbooru
-    const regexDb = /(https:\/\/danbooru\.donmai\.us\/(?:posts|post\/show|show)\/)(\d+)/;
-    const matchDb = cleanedUrl.match(regexDb);
-    if (matchDb) {
-        return { id: parseInt(matchDb[2]), type: 'danbooru' };
-    }
-    // Pixiv
-    const regexPy = /(https:\/\/(?:www\.)?pixiv\.net\/(?:en\/|)(?:i\/|artworks\/))(\d+)/;
-    const matchPy = cleanedUrl.match(regexPy);
-    if (matchPy) {
-        return { id: parseInt(matchPy[2]), type: 'pixiv' };
-    }
-
-    // E-Hentai
-    const regexEh = /(https:\/\/(?:exhentai|e-hentai)\.org\/g\/(\d+)\/[a-zA-Z0-9]+\/)/;
-    const matchEh = cleanedUrl.match(regexEh);
-    if (matchEh) {
-        return { url: matchEh[0], type: 'ehentai' };
-    }
-
-    // NHentai
-    const regexNh = /(https:\/\/nhentai\.net\/g\/(\d+)\/)/;
-    const matchNh = cleanedUrl.match(regexNh);
-    if (matchNh) {
-        return { gid: parseInt(matchNh[2]), type: 'nhentai' };
+        // Danbooru
+        const regexDb = /(https:\/\/danbooru\.donmai\.us\/(?:posts|post\/show|show)\/)(\d+)/;
+        const matchDb = cleanedUrl.match(regexDb);
+        if (matchDb) {
+            return { id: parseInt(matchDb[2]), type: 'danbooru' };
+        }
+        // Pixiv
+        const regexPy = /(https:\/\/(?:www\.)?pixiv\.net\/(?:en\/|)(?:i\/|artworks\/))(\d+)/;
+        const matchPy = cleanedUrl.match(regexPy);
+        if (matchPy) {
+            return { id: parseInt(matchPy[2]), type: 'pixiv' };
+        }
+        // E-Hentai
+        const regexEh = /(https:\/\/(?:exhentai|e-hentai)\.org\/g\/(\d+)\/[a-zA-Z0-9]+\/)/;
+        const matchEh = cleanedUrl.match(regexEh);
+        if (matchEh) {
+            return { url: matchEh[0], type: 'ehentai' };
+        }
+        // NHentai
+        const regexNh = /(https:\/\/nhentai\.net\/g\/(\d+)\/)/;
+        const matchNh = cleanedUrl.match(regexNh);
+        if (matchNh) {
+            return { gid: parseInt(matchNh[2]), type: 'nhentai' };
+        }
     }
 
     // 如果没有找到匹配项，返回false
     if (isImg) {
-        global.replyMsg(context, `未搜索到收录图站`, false, true);
+        let notFoundMsg = `未搜索到收录图站`;
+        // 仅当有成功获取到相似度时才追加显示
+        const accParts = [];
+        if (snSimilarity != null) {
+            accParts.push(`Acc1: ${Math.round(snSimilarity)}`);
+        }
+        if (iqdbSimilarity != null) {
+            accParts.push(`Acc2: ${Math.round(iqdbSimilarity)}`);
+        }
+        if (accParts.length > 0) {
+            notFoundMsg += `\n${accParts.join(' ')}`;
+        }
+        global.replyMsg(context, notFoundMsg, false, true);
     }
     return false;
 }
@@ -380,10 +403,10 @@ export async function getCommon(context) {
                                     const imgCQ = await downloadImage(url, context, !!Rvhost);
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
                                 } catch (error) {
-                                    // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求
-                                    console.warn('[来点功能-Danbooru图片代理下载失败回退直连]', error.message);
-                                    console.log('[来点功能-Danbooru图片回退直连URL]', illust.large_file_url);
-                                    const imgCQ = await downloadImage(illust.large_file_url, context, false);
+                                    // 如果使用Worker代理失败，则绕过Worker直接使用代理请求原始CDN
+                                    console.warn('[来点功能-Danbooru图片Worker代理下载失败回退直连CDN]', error.message);
+                                    console.log('[来点功能-Danbooru图片绕过Worker直接代理请求CDN]', illust.large_file_url);
+                                    const imgCQ = await downloadImage(illust.large_file_url, context, true);
                                     replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false);
                                 }
                             } catch (error) {
@@ -741,10 +764,9 @@ async function handleTagsAndPlayVoice(tags, context) {
 }
 
 /**
- * 图片搜索存档功能，仅使用saucenao和Iqdb，不直接回复消息
+ * 图片搜索存档功能，仅使用saucenao和Iqdb，搜索完一张就立即处理入库
  * @param {Object} context 消息上下文
- * @param {number} [customDB=-1] 自定义搜索数据库
- * @returns {Promise<{success: boolean, results: Array}>} 搜索结果对象
+ * @returns {Promise<{hasResult: boolean, snSimilarity: number|null, iqdbSimilarity: number|null}>} 搜索结果对象
  */
 export async function ArchivedImg(context) {
 
@@ -758,23 +780,44 @@ export async function ArchivedImg(context) {
         global.replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
     }
 
-    if (!imgs.length) return;
+    if (!imgs.length) return { hasResult: false, snSimilarity: null, iqdbSimilarity: null };
 
-    for (const img of imgs) {
-        console.log('[图片存档-开始反向搜图]', img.url);
+    let hasAnyResult = false; // 是否有任何一张图片成功入库
+    let lastSnSimilarity = null; // 最后一张图的 saucenao 相似度（用于显示）
+    let lastIqdbSimilarity = null; // 最后一张图的 iqdb 相似度（用于显示）
+
+    for (let i = 0; i < imgs.length; i++) {
+        const img = imgs[i];
+        
+        // 如果不是第一张图，等待10秒避免触发限流
+        if (i > 0) {
+            console.log(`[图片存档-等待10秒后搜索第${i + 1}张图片]`);
+            await new Promise(resolve => setTimeout(resolve, 10000));
+        }
+        
+        console.log(`[图片存档-开始反向搜图 ${i + 1}/${imgs.length}]`, img.url);
 
         // 检查图片比例
         if (
             global.config.bot.stopSearchingHWRatioGt > 0 &&
             !(await checkImageHWRatio(img.url, global.config.bot.stopSearchingHWRatioGt))
         ) {
-            global.replyMsg(context, global.config.bot.replys.stopSearchingByHWRatio, false, true);
-            return;
+            console.log('[图片存档-图片比例不符合要求，跳过]');
+            continue;
         }
 
         let useIqdb = false;
+        let snSimilarity = null;
+        let iqdbSimilarity = null;
+        let resultUrl = "";
 
         const snRes = await saucenao(img, snDB.来源, false, true);
+        
+        // 记录 saucenao 相似度（仅在搜索成功时）
+        if (snRes.success && snRes.similarity != null) {
+            snSimilarity = snRes.similarity;
+            lastSnSimilarity = snSimilarity;
+        }
 
         if (!snRes.success || snRes.lowAcc) {
             useIqdb = true;
@@ -782,22 +825,28 @@ export async function ArchivedImg(context) {
         } else {
             // Saucenao搜索成功且相似度高，输出结果到控制台
             console.log('[图片存档-SauceNAO高相似度匹配成功]', snRes.msg);
-            return snRes.msg;
+            resultUrl = snRes.msg;
         }
 
         // iqdb
         if (useIqdb) {
-            const { ReturnMsg, success: iqdbSuc, isLowAcc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
+            const { ReturnMsg, success: iqdbSuc, isLowAcc, similarity: iqdbSim, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
             if (asErr) {
                 console.error('[图片存档-IQDB搜索请求失败]', asErr);
                 logError(asErr);
             } else {
+                // 记录 iqdb 相似度（仅在搜索成功时）
+                if (iqdbSuc && iqdbSim != null) {
+                    iqdbSimilarity = iqdbSim;
+                    lastIqdbSimilarity = iqdbSimilarity;
+                }
+                
                 const cleanMsg = ReturnMsg.replace(/base64:\/\/[^\]]+/, 'base64://[image_data]');
 
                 if (iqdbSuc && !isLowAcc) {
                     // Iqdb搜索成功且相似度高，输出结果到控制台
                     console.log('[图片存档-IQDB高相似度匹配成功]', cleanMsg);
-                    return ReturnMsg;
+                    resultUrl = ReturnMsg;
                 } else {
                     // 优化日志输出，移除base64图像数据
                     console.warn('[图片存档-IQDB相似度过低]', cleanMsg);
@@ -805,175 +854,234 @@ export async function ArchivedImg(context) {
             }
         }
 
+        // 搜索完成后立即尝试匹配图站并入库
+        if (resultUrl !== "") {
+            const illustObj = matchUrlToIllust(resultUrl);
+            if (illustObj) {
+                console.log(`[图片存档-匹配到图站 ${i + 1}/${imgs.length}]`, illustObj);
+                await processIllustObj(illustObj, context);
+                hasAnyResult = true;
+            }
+        }
     }
-    return "";
+
+    // 返回是否有成功入库的结果，以及最后一张图的相似度（用于未收录时显示）
+    return { 
+        hasResult: hasAnyResult, 
+        snSimilarity: lastSnSimilarity, 
+        iqdbSimilarity: lastIqdbSimilarity 
+    };
 }
 
+/**
+ * 从搜索结果URL匹配图站信息
+ * @param {string} resultUrl 搜索结果URL
+ * @returns {Object|null} 图站信息对象
+ */
+function matchUrlToIllust(resultUrl) {
+    const cleanedUrl = resultUrl.replace('/收藏', '').replace(/^\/post/, '').trim().replace(/[\u200B-\u200D\uFEFF]/g, '');
+    
+    // Danbooru
+    const regexDb = /(https:\/\/danbooru\.donmai\.us\/(?:posts|post\/show|show)\/)(\d+)/;
+    const matchDb = cleanedUrl.match(regexDb);
+    if (matchDb) {
+        return { id: parseInt(matchDb[2]), type: 'danbooru' };
+    }
+    // Pixiv
+    const regexPy = /(https:\/\/(?:www\.)?pixiv\.net\/(?:en\/|)(?:i\/|artworks\/))(\d+)/;
+    const matchPy = cleanedUrl.match(regexPy);
+    if (matchPy) {
+        return { id: parseInt(matchPy[2]), type: 'pixiv' };
+    }
+    // E-Hentai
+    const regexEh = /(https:\/\/(?:exhentai|e-hentai)\.org\/g\/(\d+)\/[a-zA-Z0-9]+\/)/;
+    const matchEh = cleanedUrl.match(regexEh);
+    if (matchEh) {
+        return { url: matchEh[0], type: 'ehentai' };
+    }
+    // NHentai
+    const regexNh = /(https:\/\/nhentai\.net\/g\/(\d+)\/)/;
+    const matchNh = cleanedUrl.match(regexNh);
+    if (matchNh) {
+        return { gid: parseInt(matchNh[2]), type: 'nhentai' };
+    }
+    
+    return null;
+}
 
+// 处理单个作品入库
+async function processIllustObj(illustObj, context) {
+    if (illustObj.type === 'pixiv') {
+        illustAddPixiv(illustObj.id, context).then(async result => {
+            if (result.error) {
+                global.replyMsg(context, result.error, false, true);
+            } else {
+                replyPixivRatingMsg(illustObj.id, context, `${result.message}:${result.author}<${result.title}>\n${result.caption}`);
+                if (result.isR18) {
+                    global.replyMsg(context, 'R18？？？  不可以涩涩！ 死刑！', false, true);
+                } else if (result.meta_single_page) {
+                    const url = getSetuUrl(proxy, result.meta_large);
+                    if (url) {
+                        try {
+                            console.log('[收藏功能-Pixiv单图发送URL]', url);
+                            replyPixivRatingMsg(illustObj.id, context, await CQ.imgPreDl(url));
+                        } catch (e) {
+                            console.error('[收藏功能-Pixiv单图预下载失败]', e);
+                        }
+                    }
+                } else if (result.meta_large_pages) {
+                    const preMsg = result.meta_large_pages.map((pageUrl, index) => {
+                        const url = getSetuUrl(proxy, pageUrl);
+                        if (url) {
+                            console.log(`[收藏功能-Pixiv图集发送URL-第${index + 1}张]`, url);
+                            return CQ.img(url);
+                        }
+                    }).filter(Boolean);
+                    replyPixivRatingMsg(illustObj.id, context, preMsg.join(''));
+                }
+                replyCollectReply(context, result);
+            }
+        }).catch(error => {
+            handleApiError(error, context, "投稿");
+        });
+        return true;
+    } else if (illustObj.type === 'danbooru') {
+        illustAddDanbooru(illustObj.id, context).then(async result => {
+            if (result.error) {
+                global.replyMsg(context, result.error, false, true);
+            } else {
+                // 有pixiv id则发送pixiv
+                const texts = [];
+
+                if (result.pixiv_id) {
+                    texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
+                } else {
+                    texts.push(`${result.message}\n来源：${result.source}`);
+                }
+                // 仅在分级不确定时补充判定
+                if (result.rating === 'e') {
+                    global.replyMsg(context, '是限制级？？ 不可以涩涩！ 死刑！', false, true);
+                } else if (result.large_file_url || result.file_url) {
+                    const imageUrl = result.large_file_url || result.file_url;
+                    try {
+                        // 检查URL是否为Pixiv URL（i.pximg.net域名）
+                        if (/^https?:\/\/i\.pximg\.net\//.test(imageUrl)) {
+                            // Pixiv图片，使用sendPximgProxies代理
+                            let proxyUrl = null;
+                            
+                            if (setting.sendPximgProxies.length) {
+                                for (const imgProxy of setting.sendPximgProxies) {
+                                    const path = new URL(imageUrl).pathname.replace(/^\//, '');
+                                    if (!/{{.+}}/.test(imgProxy)) {
+                                        proxyUrl = new URL(path, imgProxy).href;
+                                        break; // 使用第一个匹配的代理
+                                    }
+                                }
+                            }
+
+                            if (proxyUrl) {
+                                console.log('[收藏功能-DanbooruPixiv来源图片代理URL]', proxyUrl);
+                                try {
+                                    const imgCQ = await CQ.imgPreDl(proxyUrl);
+                                    texts.push(imgCQ);
+                                    replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                } catch (error) {
+                                    console.warn('[收藏功能-DanbooruPixiv来源图片代理下载失败]', error.message);
+                                    // 代理失败，尝试直接使用downloadImage（会自动应用代理）
+                                    console.log('[收藏功能-DanbooruPixiv来源图片回退downloadImage]', imageUrl);
+                                    const imgCQ = await downloadImage(imageUrl, context, true);
+                                    texts.push(imgCQ);
+                                    replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                }
+                            } else {
+                                // 没有配置sendPximgProxies，使用downloadImage自动处理
+                                console.log('[收藏功能-DanbooruPixiv来源图片无代理配置使用自动处理]', imageUrl);
+                                const imgCQ = await downloadImage(imageUrl, context, true);
+                                texts.push(imgCQ);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                            }
+                        } else if (imageUrl.startsWith('https://cdn.donmai.us/')) {
+                            // Danbooru CDN图片，使用reverseProxy
+                            try {
+                                const Rvhost = global.config.reverseProxy;
+                                const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
+                                console.log('[收藏功能-DanbooruCDN图片下载URL]', url);
+                                const imgCQ = await downloadImage(url, context, !!Rvhost);
+                                texts.push(imgCQ);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                            } catch (error) {
+                                // Worker代理失败，绕过Worker直接使用代理请求原始CDN
+                                console.warn('[收藏功能-DanbooruCDN Worker代理失败回退直连CDN]', error.message);
+                                console.log('[收藏功能-DanbooruCDN绕过Worker直接代理请求]', imageUrl);
+                                const imgCQ = await downloadImage(imageUrl, context, true);
+                                texts.push(imgCQ);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                            }
+                        } else {
+                            // 其他来源图片，直接下载
+                            console.log('[收藏功能-Danbooru其他来源图片直接下载URL]', imageUrl);
+                            const imgCQ = await CQ.imgPreDl(imageUrl);
+                            texts.push(imgCQ);
+                            replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                        }
+                        replyCollectReply(context, result);
+                    } catch (e) {
+                        console.error('[收藏功能-Danbooru图片处理流程异常]', e);
+                    }
+                } else {
+                    // large_file_url/文件地址缺失，可能因Danbooru Gold权限不足导致无法展示图片
+                    try {
+                        texts.push('（已收藏）');
+                        replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                        replyCollectReply(context, result);
+                    } catch (e) {
+                        console.error('[收藏功能-Danbooru无图片权限处理异常]', e);
+                    }
+                }
+            }
+        }).catch(error => {
+            handleApiError(error, context, "投稿");
+        });
+        return true;
+    } else if (illustObj.type === 'ehentai') {
+        illustAddEhentai(illustObj.url, context).then(async result => {
+            if (result.error) {
+                global.replyMsg(context, result.error, false, true);
+            } else {
+                replyEhentaiRatingMsg(illustObj.url, context, `${result.message}\n来源：${illustObj.url}`);
+                replyCollectReply(context, result);
+            }
+        }).catch(error => {
+            handleApiError(error, context, "投稿");
+        });
+        return true;
+    } else if (illustObj.type === 'nhentai') {
+        illustAddNhentai(illustObj.gid, context).then(async result => {
+            if (result.error) {
+                global.replyMsg(context, result.error, false, true);
+            } else {
+                replyNhentaiRatingMsg(illustObj.gid, context, `${result.message}\n来源：https://nhentai.net/g/${illustObj.gid}/`);
+                replyCollectReply(context, result);
+            }
+        }).catch(error => {
+            handleApiError(error, context, "投稿");
+        });
+        return true;
+    }
+    return false;
+}
 
 
 export default async (context) => {
 
     const illustObj = await getContextFromUrl(context);
     if (illustObj) {
-        if (illustObj.type === 'pixiv') {
-            illustAddPixiv(illustObj.id, context).then(async result => {
-                if (result.error) {
-                    global.replyMsg(context, result.error, false, true);
-                } else {
-                    replyPixivRatingMsg(illustObj.id, context, `${result.message}:${result.author}<${result.title}>\n${result.caption}`);
-                    if (result.isR18) {
-                        global.replyMsg(context, 'R18？？？  不可以涩涩！ 死刑！', false, true);
-                    } else if (result.meta_single_page) {
-                        const url = getSetuUrl(proxy, result.meta_large);
-                        if (url) {
-                            try {
-                                console.log('[收藏功能-Pixiv单图发送URL]', url);
-                                replyPixivRatingMsg(illustObj.id, context, await CQ.imgPreDl(url));
-                            } catch (e) {
-                                console.error('[收藏功能-Pixiv单图预下载失败]', e);
-                            }
-                        }
-                    } else if (result.meta_large_pages) {
-                        const preMsg = result.meta_large_pages.map((pageUrl, index) => {
-                            const url = getSetuUrl(proxy, pageUrl);
-                            if (url) {
-                                console.log(`[收藏功能-Pixiv图集发送URL-第${index + 1}张]`, url);
-                                return CQ.img(url);
-                            }
-                        }).filter(Boolean);
-                        replyPixivRatingMsg(illustObj.id, context, preMsg.join(''));
-                    }
-                    replyCollectReply(context, result);
-                }
-            }).catch(error => {
-                handleApiError(error, context, "投稿");
-            });
+        // 如果是 _processed 类型，说明图片搜索已在 ArchivedImg 中完成处理
+        if (illustObj.type === '_processed') {
             return true;
-        } else if (illustObj.type === 'danbooru') {
-            illustAddDanbooru(illustObj.id, context).then(async result => {
-                if (result.error) {
-                    global.replyMsg(context, result.error, false, true);
-                } else {
-                    // 有pixiv id则发送pixiv
-                    const texts = [];
-
-                    if (result.pixiv_id) {
-                        texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
-                    } else {
-                        texts.push(`${result.message}\n来源：${result.source}`);
-                    }
-                    // 仅在分级不确定时补充判定
-                    if (result.rating === 'e') {
-                        global.replyMsg(context, '是限制级？？ 不可以涩涩！ 死刑！', false, true);
-                    } else if (result.large_file_url || result.file_url) {
-                        const imageUrl = result.large_file_url || result.file_url;
-                        try {
-                            // 检查URL是否为Pixiv URL（i.pximg.net域名）
-                            if (/^https?:\/\/i\.pximg\.net\//.test(imageUrl)) {
-                                // Pixiv图片，使用sendPximgProxies代理
-                                let proxyUrl = null;
-                                
-                                if (setting.sendPximgProxies.length) {
-                                    for (const imgProxy of setting.sendPximgProxies) {
-                                        const path = new URL(imageUrl).pathname.replace(/^\//, '');
-                                        if (!/{{.+}}/.test(imgProxy)) {
-                                            proxyUrl = new URL(path, imgProxy).href;
-                                            break; // 使用第一个匹配的代理
-                                        }
-                                    }
-                                }
-
-                                if (proxyUrl) {
-                                    console.log('[收藏功能-DanbooruPixiv来源图片代理URL]', proxyUrl);
-                                    try {
-                                        const imgCQ = await CQ.imgPreDl(proxyUrl);
-                                        texts.push(imgCQ);
-                                        replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                                    } catch (error) {
-                                        console.warn('[收藏功能-DanbooruPixiv来源图片代理下载失败]', error.message);
-                                        // 代理失败，尝试直接使用downloadImage（会自动应用代理）
-                                        console.log('[收藏功能-DanbooruPixiv来源图片回退downloadImage]', imageUrl);
-                                        const imgCQ = await downloadImage(imageUrl, context, true);
-                                        texts.push(imgCQ);
-                                        replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                                    }
-                                } else {
-                                    // 没有配置sendPximgProxies，使用downloadImage自动处理
-                                    console.log('[收藏功能-DanbooruPixiv来源图片无代理配置使用自动处理]', imageUrl);
-                                    const imgCQ = await downloadImage(imageUrl, context, true);
-                                    texts.push(imgCQ);
-                                    replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                                }
-                            } else if (imageUrl.startsWith('https://cdn.donmai.us/')) {
-                                // Danbooru CDN图片，使用reverseProxy
-                                try {
-                                    const Rvhost = global.config.reverseProxy;
-                                    const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
-                                    console.log('[收藏功能-DanbooruCDN图片下载URL]', url);
-                                    const imgCQ = await downloadImage(url, context, !!Rvhost);
-                                    texts.push(imgCQ);
-                                    replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                                } catch (error) {
-                                    console.warn('[收藏功能-DanbooruCDN代理失败回退直连]', error.message);
-                                    console.log('[收藏功能-DanbooruCDN回退直连URL]', imageUrl);
-                                    const imgCQ = await downloadImage(imageUrl, context, false);
-                                    texts.push(imgCQ);
-                                    replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                                }
-                            } else {
-                                // 其他来源图片，直接下载
-                                console.log('[收藏功能-Danbooru其他来源图片直接下载URL]', imageUrl);
-                                const imgCQ = await CQ.imgPreDl(imageUrl);
-                                texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                            }
-                            replyCollectReply(context, result);
-                        } catch (e) {
-                            console.error('[收藏功能-Danbooru图片处理流程异常]', e);
-                        }
-                    } else {
-                        // large_file_url/文件地址缺失，可能因Danbooru Gold权限不足导致无法展示图片
-                        try {
-                            texts.push('（已收藏）');
-                            replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
-                            replyCollectReply(context, result);
-                        } catch (e) {
-                            console.error('[收藏功能-Danbooru无图片权限处理异常]', e);
-                        }
-                    }
-                }
-            }).catch(error => {
-                handleApiError(error, context, "投稿");
-            });
-            return true;
-        } else if (illustObj.type === 'ehentai') {
-            illustAddEhentai(illustObj.url, context).then(async result => {
-                if (result.error) {
-                    global.replyMsg(context, result.error, false, true);
-                } else {
-                    replyEhentaiRatingMsg(illustObj.url, context, `${result.message}\n来源：${illustObj.url}`);
-                    replyCollectReply(context, result);
-                }
-            }).catch(error => {
-                handleApiError(error, context, "投稿");
-            });
-            return true;
-        } else if (illustObj.type === 'nhentai') {
-            illustAddNhentai(illustObj.gid, context).then(async result => {
-                if (result.error) {
-                    global.replyMsg(context, result.error, false, true);
-                } else {
-                    replyNhentaiRatingMsg(illustObj.gid, context, `${result.message}\n来源：https://nhentai.net/g/${illustObj.gid}/`);
-                    replyCollectReply(context, result);
-                }
-            }).catch(error => {
-                handleApiError(error, context, "投稿");
-            });
-            return true;
-        } else {
-            return false;
         }
+        // 处理单个作品（URL方式入库）
+        return await processIllustObj(illustObj, context);
     }
 };
 
