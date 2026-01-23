@@ -1,32 +1,24 @@
 import { existsSync } from 'fs';
 import Path from 'path';
 import { inspect } from 'util';
-import { pick } from 'lodash-es';
 import AxiosProxy from '../../utils/axiosProxy.mjs';
 import CQ from '../../utils/CQcode.mjs';
 import dailyCountInstance from '../../utils/dailyCount.mjs';
-import emitter from '../../utils/emitter.mjs';
 import { rotateImage } from '../../utils/image.mjs';
 import { getDirname } from '../../utils/path.mjs';
 import { retryAsync } from '../../utils/retry.mjs';
-import { getxingchenContent, insertxingchenContent, deletexingchenContent, createJWT } from './auth.mjs';
+import { createJWT } from './auth.mjs';
 
 
 const __dirname = getDirname(import.meta.url);
 
-let overrideGroups = [];
-
-emitter.onConfigLoad(() => {
-  overrideGroups = global.config.bot.tarotReader.overrides.map(({ blackGroup, whiteGroup }) => {
-    const override = {};
-    if (blackGroup) override.blackGroup = new Set(blackGroup);
-    if (whiteGroup) override.whiteGroup = new Set(whiteGroup);
-    return override;
-  });
-});
+const matchType = {
+  Divination: Symbol('Divination'),
+  Fortune: Symbol('Fortune'),
+};
 
 
-const tarotGlmReader = (config, match, type) => {
+const tarotGlmReader = (config, match, type, context) => {
   // 群单例，群聊模式
   const modelName = 'tarotReader';
   const imgPath = Path.resolve(__dirname, '../../../data/image');
@@ -36,21 +28,33 @@ const tarotGlmReader = (config, match, type) => {
     const content = { choices: [] };
     let prompt;
     let cardImg;
+    let divinationData = null;  // 用于存储占卜阵列的详细数据
 
     switch (type) {
       case matchType.Divination: {
         const tarotFormationResult = getRandomFormation(_spread);
         const tarotCardResult = drawTarotCardsWithoutReplacement(_card, tarotFormationResult.formation);
-        if (match) {
-          prompt = `老师的问题是:${match},塔罗牌阵是[${tarotFormationResult.name}]，抽到的塔罗牌为：`;
-        } else {
-          prompt = `老师抽到的塔罗牌阵是[${tarotFormationResult.name}]，抽到的塔罗牌为：`;
-        }
-        // 遍历每张卡牌，添加到提示中
+        const representations = tarotFormationResult.formation.representations[0] || [];
+        
+        divinationData = {
+          formation: tarotFormationResult,
+          cards: tarotCardResult,
+          question: match,
+          representations
+        };
+        
+        let cardListStr = '';
+        let promptCardGuide = '';
         tarotCardResult.forEach((card, index) => {
-          // 为每张卡牌添加名称和正逆位信息
-          prompt += `第${index + 1}张:${card.name_cn}（${card.position})，`;
+          cardListStr += `第${index + 1}张:${card.name_cn}（${card.position})，`;
+          promptCardGuide += `\n【第${index + 1}张卡牌解读】\n针对第${index + 1}张牌${card.name_cn}(${card.position})在"${representations[index] || '该位置'}"位置，进行详细的含义解读${index > 0 ? '，并说明与前面牌的关联' : ''}。`;
         });
+        
+        if (match) {
+          prompt = `用户的问题是：${match}\n\n使用的牌阵：${tarotFormationResult.name}\n\n抽到的塔罗牌为：${cardListStr}\n\n请严格按照以下格式进行解读（每张牌之间使用【分割线】分隔，共${tarotCardResult.length}张牌）：${promptCardGuide}\n\n【综合总结】\n根据整个${tarotFormationResult.name}的组合含义，对用户的问题"${match}"进行综合分析和建议。`;
+        } else {
+          prompt = `使用的牌阵：${tarotFormationResult.name}\n\n抽到的塔罗牌为：${cardListStr}\n\n请严格按照以下格式进行解读（每张牌之间使用【分割线】分隔，共${tarotCardResult.length}张牌）：${promptCardGuide}\n\n【综合总结】\n根据整个${tarotFormationResult.name}的组合含义，进行综合分析。`;
+        }
         break;
       }
       case matchType.Fortune: {
@@ -84,7 +88,7 @@ const tarotGlmReader = (config, match, type) => {
     }];
 
     const param = {
-      model: 'glm-4-plus',
+      model: type === matchType.Divination ? 'glm-4.6' : 'glm-4-plus',
       messages: [
         ...(Array.isArray(config.prependMessages) ? config.prependMessages : []),
         ...content.choices,
@@ -103,29 +107,138 @@ const tarotGlmReader = (config, match, type) => {
 
     if (debug) console.log(`${modelName} params:`, inspect(param, { depth: null }));
 
+    console.log(`[${modelName}] 📡 牌阵占卜向 GLM API 发送请求...`);
+    const startTime = Date.now();
+    
     const { data } = await AxiosProxy.post('https://open.bigmodel.cn/api/paas/v4/chat/completions', param, {
       headers,
       validateStatus: status => 200 <= status && status < 500,
     });
+    
+    const elapsed = Date.now() - startTime;
+    console.log(`[${modelName}] ✓ API 响应完成 (耗时: ${elapsed}ms)`);
+    
     if (debug) console.log(`${modelName} response:`, inspect(data, { depth: null }));
 
     if (data.error) {
       const errorMsg = data.error.message;
-      console.error(`${modelName} error:`, errorMsg);
+      console.error(`[${modelName}] ❌ API 返回错误:`, errorMsg);
       return `ERROR1: ${errorMsg}`;
     }
     let returnMessage = '';
 
     if (data.choices) {
-      const choiceResponses = data.choices.map(obj => {
-        const FormatResult = obj.message.content.replace(/(\"*)(\\n*)/g, '').trim();
-        returnMessage += FormatResult;
-        return {
-          ...obj.message,
-          content: FormatResult
-        };
-      });
+      // 保留换行符，只删除多余的转义引号
+      const FormatResult = data.choices[0].message.content.replace(/\\"/g, '"').trim();
+      returnMessage = FormatResult;
 
+      // 牌阵占卜：构建合并消息数据
+      if (divinationData) {
+        try {
+          console.log(`[${modelName}] 🎴 开始处理牌阵占卜消息...`);
+          const messages = [];
+          const { formation, cards, question, representations } = divinationData;
+          
+          console.log(`[${modelName}] 牌阵: ${formation.name}, 卡牌数: ${cards.length}`);
+          if (question) console.log(`[${modelName}] 用户提问: ${question}`);
+          
+          // 获取用户昵称或名字
+          const senderName = context?.sender?.card || context?.sender?.nickname || '老师';
+          console.log(`[${modelName}] 用户昵称: ${senderName}`);
+          
+          // 第一条消息：问题和牌阵信息
+          if (question) {
+            messages.push(`【提问】${senderName}：${question}\n【使用牌阵】${formation.name}`);
+          } else {
+            messages.push(`【使用牌阵】${formation.name}`);
+          }
+          
+          // 分割AI返回的内容
+          console.log(`[${modelName}] 开始分割AI返回内容...`);
+          
+          // 1. 提取【综合总结】后面的内容
+          const summaryMatch = returnMessage.match(/【综合总结】([\s\S]*?)$/);
+          const summaryContent = summaryMatch ? summaryMatch[1].trim() : '';
+          if (summaryContent) {
+            console.log(`[${modelName}] ✓ 提取综合总结 (${summaryContent.length}字符)`);
+          } else {
+            console.warn(`[${modelName}] ⚠️  未找到【综合总结】部分`);
+          }
+          
+          // 2. 按照牌数严格分割：提取所有【第N张卡牌解读】及其内容
+          const interpretations = [];
+          for (let cardIndex = 0; cardIndex < cards.length; cardIndex++) {
+            const cardNum = cardIndex + 1;
+            const pattern = new RegExp(`【第${cardNum}张卡牌解读】([\\s\\S]*?)(?=【分割线】|【第\\d+张卡牌解读】|【综合总结】|$)`);
+            const match = returnMessage.match(pattern);
+            const interpretation = match ? match[1].trim() : '';
+            interpretations.push(interpretation);
+            
+            if (interpretation) {
+              console.log(`[${modelName}] ✓ 第${cardNum}张卡牌解读完成 (${interpretation.length}字符)`);
+            } else {
+              console.error(`[${modelName}] ❌ 第${cardNum}张卡牌解读为空！可能是格式错误`);
+            }
+          }
+          
+          // 为每张牌构建单独的消息
+          console.log(`[${modelName}] 开始构建消息对象...`);
+          for (let index = 0; index < cards.length; index++) {
+            const card = cards[index];
+            const pos = card.position === '顺位' ? '(正位)' : '(逆位)';
+            const imgPath_local = card.pic;
+            const posDesc = card.position === '顺位';
+            
+            let cardMsg = `【第${index + 1}张翻开】${card.name_cn}${pos}`;
+            
+            // 添加牌位含义
+            if (representations && representations[index]) {
+              cardMsg += `\n【牌位含义】${representations[index]}`;
+            }
+            
+            // 添加卡牌图片
+            try {
+              if (posDesc) {
+                cardMsg += `\n${CQ.img(`${imgPath}/${imgPath_local}.png`)}`;
+              } else {
+                const fImg = `${imgPath}/${imgPath_local}f.png`;
+                if (!existsSync(fImg)) {
+                  await rotateImage(`${imgPath}/${imgPath_local}.png`, fImg, 180);
+                }
+                cardMsg += `\n${CQ.img(fImg)}`;
+              }
+            } catch (imgErr) {
+              console.error(`[${modelName}] ❌ 处理卡牌图片出错 (${card.name_cn}):`, imgErr.message);
+            }
+            
+            // 添加该张牌的解读
+            if (interpretations[index]) {
+              cardMsg += `\n【解读】${interpretations[index]}`;
+            } else {
+              console.warn(`[${modelName}] ⚠️  第${index + 1}张牌无解读内容`);
+            }
+            
+            messages.push(cardMsg);
+          }
+          
+          // 添加综合总结
+          if (summaryContent) {
+            messages.push(`【综合总结】\n${summaryContent}`);
+          }
+          
+          
+          return {
+            isForward: true,
+            messages,
+            type: 'divination'
+          };
+        } catch (err) {
+          console.error(`[${modelName}] ❌ 牌阵占卜处理异常:`, err);
+          throw err;
+        }
+      }
+
+      // 单张占卜或早安占卜：保持原有逻辑
       if (cardImg) {
         if (cardImg.pos) {
           return `${prompt}\n${CQ.img(`${imgPath}/${cardImg.pic}.png`)}\n${returnMessage}`;
@@ -149,11 +262,6 @@ const tarotGlmReader = (config, match, type) => {
       `ERROR2: ${e.message}`;
       console.log(`${modelName} ERROR2:`, e);
     });
-};
-
-const matchType = {
-  Divination: Symbol('Divination'),
-  Fortune: Symbol('Fortune'),
 };
 
 
@@ -238,15 +346,20 @@ export const goodmorningSensei = () => {
 
     if (debug) console.log(`${modelName} params:`, inspect(param, { depth: null }));
 
+    const startTime = Date.now();
+    
     const { data } = await AxiosProxy.post('https://open.bigmodel.cn/api/paas/v4/chat/completions', param, {
       headers,
       validateStatus: status => 200 <= status && status < 500,
     });
+    
+    const elapsed = Date.now() - startTime;
+    
     if (debug) console.log(`${modelName} response:`, inspect(data, { depth: null }));
 
     if (data.error) {
       const errorMsg = data.error.message;
-      console.error(`${modelName} error:`, errorMsg);
+      console.error(`[${modelName}] ❌ API 返回错误:`, errorMsg);
       return `ERROR1: ${errorMsg}`;
     }
     let returnMessage = '';
@@ -314,17 +427,41 @@ export default async context => {
     return true;
   }
 
-  const { userDailyLimit } = global.config.bot.tarotReader;
-  if (userDailyLimit) {
-    if (dailyCountInstance.get(context.user_id) >= userDailyLimit) {
-      global.replyMsg(context, '老师今天占卜太多次了，再占卜就要失灵哦，明天再来吧！', false, true);
-      return true;
-    } else dailyCountInstance.add(context.user_id);
+  // 按类型分别限制使用次数：牌阵3次/天，占卜5次/天
+  const { divinationLimit = 3, fortuneLimit = 5 } = global.config.bot.tarotReader;
+  const limitKey = `${context.user_id}:${type === matchType.Divination ? 'divination' : 'fortune'}`;
+  const currentCount = dailyCountInstance.get(limitKey) || 0;
+  const limit = type === matchType.Divination ? divinationLimit : fortuneLimit;
+  
+  if (limit > 0 && currentCount >= limit) {
+    const limitMsg = type === matchType.Divination 
+      ? `老师今天进行牌阵占卜已经${divinationLimit}次了，再多就不灵了，明天再来吧！` 
+      : `老师今天进行占卜已经${fortuneLimit}次了，再多就不灵了，明天再来吧！`;
+    global.replyMsg(context, limitMsg, false, true);
+    return true;
+  }
+  dailyCountInstance.add(limitKey);
+
+  // 仅牌阵占卜显示稍等提示
+  if (type === matchType.Divination) {
+    const initPrompt = `✨ 爱丽丝正在为老师洗牌并进行${
+      divinationContent ? `关于 "${divinationContent}" 的` : ''
+    }牌阵占卜，请稍候...`;
+    global.replyMsg(context, initPrompt, false, true);
   }
 
+  const completion = await tarotGlmReader(config, divinationContent, type, context);
 
-  const completion = await tarotGlmReader(config, divinationContent, type);
+  // 处理合并消息返回（牌阵占卜）
+  if (typeof completion === 'object' && completion.isForward) {
+    if (context.message_type === 'group') {
+      return global.replyGroupForwardMsgs(context, completion.messages);
+    } else {
+      return global.replyPrivateForwardMsgs(context, completion.messages);
+    }
+  }
 
+  // 处理普通消息返回（单张占卜、早安占卜）
   global.replyMsg(context, completion, false, true);
 
   return true;

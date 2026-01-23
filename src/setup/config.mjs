@@ -50,6 +50,8 @@ const noCheckPaths = new Set([
   'bot.characterglm.additionParams',
   'bot.characterglm.overrides',
   'bot.characterglm.meta',
+  'bot.characterglm.chatWindow',
+  'bot.characterglm.chatWindow.commands',
   'flaresolverr.proxy',
     'bot.chatgpt.prependMessages',
   'bot.chatgpt.additionParams',

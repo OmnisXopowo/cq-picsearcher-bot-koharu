@@ -78,7 +78,6 @@
     "remove-markdown": "^0.5.0",
     "sharp": "^0.33.5",
     "socks-proxy-agent": "^7.0.0",
-    "sqlite3": "^5.1.7",
     "tesseract.js": "^5.1.1",
     "tough-cookie": "^6.0.0",
     "url-join": "^5.0.0"

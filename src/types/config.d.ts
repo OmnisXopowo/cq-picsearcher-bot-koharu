@@ -91,6 +91,24 @@ declare interface Bot {
     tongyixingchen:tongyixingchen;
     like: Like;
     vits: Vit;
+    cyberCourt: CyberCourt;
+}
+
+declare interface CyberCourt {
+    enable: boolean;
+    voteWindowMinutes: number;
+    quickPassCount: number;
+    muteTimeMinutes: number;
+    userDailyLimit: number;
+    adminDailyLimit: number;
+    retrialVerdictTimeoutMinutes: number;
+    enableMuteCooldown: boolean;
+    immuneRoles: string[];
+    immuneUsers: number[];
+    blackGroup: Set<number | string>;
+    whiteGroup: Set<number | string>;
+    judgeEnable: boolean;
+    judgeSystemRole: string;
 }
 
 declare interface Vit {
@@ -152,7 +170,8 @@ declare interface tarotReader {
     regexFortune:String;
     prependMessages: [{ role: string, content: string }];
     apiKey: string;
-    userDailyLimit: number;
+    divinationLimit?: number;
+    fortuneLimit?: number;
     blackGroup: Set<number | string>;
     whiteGroup: Set<number | string>;
     overrides: any[];
