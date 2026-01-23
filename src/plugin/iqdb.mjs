@@ -36,7 +36,8 @@ async function IqDB(url) {
       return {
         ReturnMsg: colorRet,
         success: true,
-        isLowAcc: snLowAcc
+        isLowAcc: snLowAcc,
+        similarity: res.similarity
       };
     }
     

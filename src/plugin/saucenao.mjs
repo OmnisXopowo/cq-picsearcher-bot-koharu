@@ -44,6 +44,7 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
   let success = false;
   let lowAcc = false;
   let excess = false;
+  let topSimilarity = null; // 最高相似度
 
   if (apiKeys[apiKeyIndex]) {
     await getSearchResult(hosts[hostIndex], apiKeys[apiKeyIndex], img, db)
@@ -60,6 +61,7 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
         if (typeof data !== 'object') throw ret;
         if (data.results && data.results.length > 0) {
           data.results.forEach(({ header }) => (header.similarity = parseFloat(header.similarity)));
+          topSimilarity = data.results[0].header.similarity; // 保存最高相似度
           if (db === snDB.all && data.results[0].header.index_id !== snDB.pixiv) {
             const firstSim = data.results[0].header.similarity;
             const pixivIndex = data.results.findIndex(
@@ -233,6 +235,7 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
     warnMsg,
     lowAcc,
     excess,
+    similarity: topSimilarity,
   };
 }
 
