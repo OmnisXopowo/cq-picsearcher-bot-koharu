@@ -159,3 +159,22 @@ export async function delKey(key) {
     return 0;
   }
 }
+
+/**
+ * 搜索匹配模式的所有键
+ * @param {string} pattern 匹配模式，如 "tbSelect:*"
+ * @returns {Promise<string[]>} 匹配的键名数组
+ */
+export async function getKeys(pattern) {
+  try {
+    const keys = await redis.keys(pattern);
+    console.log(`[RDS keys]${pattern}: 找到 ${keys.length} 个键`);
+    return keys;
+  } catch (err) {
+    console.error(`[RDS keys]搜索失败 ${pattern}: ${err}`);
+    return [];
+  }
+}
+
+// 导出 redis 实例供需要直接操作的情况使用
+export { redis };

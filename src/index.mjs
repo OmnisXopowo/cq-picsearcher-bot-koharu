@@ -36,7 +36,7 @@ import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
-import { setKeyValue, getKeyValue, getKeyObject, setKeyObject } from './utils/redisClient.mjs';
+import { setKeyValue, getKeyValue, getKeyObject, setKeyObject, getKeys, redis } from './utils/redisClient.mjs';
 import { getRegWithCache } from './utils/regCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 
@@ -326,8 +326,8 @@ async function commonHandle(e, context) {
   if (/^\d+$/.test(context.message)) {
     try {
       // 检查是否是ehentai选择回复，通过最近的推本消息查找
-      if (!global.redis) return false;
-      const recentMsgIds = await global.redis.keys(`tbSelect:${context.group_id}:*`);
+      if (!redis) return false;
+      const recentMsgIds = await getKeys(`tbSelect:${context.group_id}:*`);
       if (recentMsgIds.length > 0) {
         // 按时间排序，获取最新的消息
         const sortedKeys = recentMsgIds.sort((a, b) => {
@@ -338,7 +338,7 @@ async function commonHandle(e, context) {
         
         // 获取最新的一条推本选择消息
         const cacheKey = sortedKeys[0];
-        const cacheData = await global.getKeyObject(cacheKey);
+        const cacheData = await getKeyObject(cacheKey);
         if (cacheData) {
           const choice = parseInt(context.message, 10);
           const galleries = cacheData.galleries;
@@ -352,7 +352,7 @@ async function commonHandle(e, context) {
             await handleEhentaiSelect(selectedGallery.link,context);
             
             // 删除已使用的缓存
-            // await global.redis.del(cacheKey);
+            // await redis.del(cacheKey);
             return true;
           } else {
             global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
@@ -604,7 +604,7 @@ async function privateAndAtMsg(e, context) {
           return;
         }
       }
-    } catch {
+    } catch (error) {
       if (global.config.bot.debug) {
         console.log(error);
       }
