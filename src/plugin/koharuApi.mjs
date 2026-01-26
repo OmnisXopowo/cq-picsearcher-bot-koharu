@@ -424,7 +424,8 @@ export async function getCommon(context) {
                     }
                 }
             } else {
-                global.replyMsg(context, `没找到这样的作品呢，请老师多多投稿哟~`, false, true);
+                // 没有找到作品，但保存 trace 信息以便用户通过 /trace 查看
+                replyNoResultMsg(context, `没找到这样的作品呢，请老师多多投稿哟~`, trace);
             }
         }
     }).catch(error => {
@@ -1207,6 +1208,31 @@ function formatKeywordTraceLine(kw) {
 export async function checkGallerySelectMsg(msgRet) {
     const cacheKey = `tbSelect:${msgRet.group_id}:${msgRet.message_id}`;
     return await getKeyObject(cacheKey, null);
+}
+
+/**
+ * 回复无结果消息，并缓存 trace 信息以支持 /trace 查看分词结果
+ * @param {object} context 上下文对象
+ * @param {string} msg 消息内容
+ * @param {object} [trace] 搜索追踪信息（可选）
+ */
+function replyNoResultMsg(context, msg, trace = null) {
+    // 使用特殊的 id 和 type 标记无结果消息
+    const record = { id: 0, type: 'no_result' };
+    if (trace) record.trace = trace;
+    
+    global.replyMsg(context, msg, false, true)
+        .then(msgRet => {
+            if (msgRet?.retcode === 0) {
+                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                console.log(`[无结果消息] ✓ 发送成功，已缓存trace (message_id: ${msgRet.data.message_id})`);
+            } else {
+                console.error(`[无结果消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
+            }
+        })
+        .catch(err => {
+            console.error('[无结果消息] ✗ 发送异常:', err);
+        });
 }
 
 /**

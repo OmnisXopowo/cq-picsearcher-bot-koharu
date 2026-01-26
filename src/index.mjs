@@ -201,7 +201,7 @@ async function replyToBotHandle(context, rMsgData) {
 
   const illustObj = await checkRatingMsg(rMsgData);
   if (illustObj) {
-    // 处理 /trace 命令 - 查看搜索追踪信息
+    // 处理 /trace 命令 - 查看搜索追踪信息（支持所有类型包括 no_result）
     if (pureText === '/trace' && global.config.bot.KoharuAPI) {
       if (illustObj.trace) {
         const traceMsg = formatTraceMessage(illustObj.trace);
@@ -209,6 +209,11 @@ async function replyToBotHandle(context, rMsgData) {
       } else {
         global.replyMsg(context, '未返回具体跟踪信息', false, true);
       }
+      return;
+    }
+    
+    // 无结果消息不支持评分和删除
+    if (illustObj.type === 'no_result') {
       return;
     }
     
