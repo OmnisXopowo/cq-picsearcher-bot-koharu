@@ -21,6 +21,10 @@
     "AImode": false,
     // 是否启用koharu api功能（/收藏、/推本、/来点）
     "KoharuAPI": false,
+    // Koharu API 基础地址
+    "koharuApiBaseUrl": "http://127.0.0.1:5000",
+    // Koharu API Token（用于认证，留空则不添加认证头）
+    "koharuApiToken": "",
     // 管理者QQ，请务必设置
     "admin": 0,
     // 管理者频道 tinyId

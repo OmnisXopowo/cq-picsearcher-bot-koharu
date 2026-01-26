@@ -13,7 +13,7 @@ import corpus from './plugin/corpus.mjs';
 import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
-import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove ,pushDoujinshi} from './plugin/koharuApi.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage } from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
@@ -201,6 +201,17 @@ async function replyToBotHandle(context, rMsgData) {
 
   const illustObj = await checkRatingMsg(rMsgData);
   if (illustObj) {
+    // 处理 /trace 命令 - 查看搜索追踪信息
+    if (pureText === '/trace' && global.config.bot.KoharuAPI) {
+      if (illustObj.trace) {
+        const traceMsg = formatTraceMessage(illustObj.trace);
+        global.replyMsg(context, traceMsg, false, true);
+      } else {
+        global.replyMsg(context, '未返回具体跟踪信息', false, true);
+      }
+      return;
+    }
+    
     if (context.message.includes('/我丢') && isSendByAdmin(context)) {
       illustRemove(illustObj);
     } else {
