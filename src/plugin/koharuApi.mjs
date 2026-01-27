@@ -29,6 +29,7 @@ const cooldownManager = new CooldownManager();
 
 export async function getContextFromUrl(context) {
     let isImg = false;
+    let isFromReply = false; // 标记是否来自引用消息
     // 修改为同时支持/收藏和/post命令
     let Url = context.message.replace('/收藏', '').replace(/^\/post/, '');
     try {
@@ -46,6 +47,7 @@ export async function getContextFromUrl(context) {
                     .map(({ file, url }) => `[CQ:image,file=${CQ.escape(file, true)},url=${CQ.escape(url, true)}]`)
                     .join('');
                 context = { ...context, message: context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, rMsg) };
+                isFromReply = true; // 标记来自引用
             } else {
                 // 获取不到原消息，忽略
             }
@@ -59,12 +61,11 @@ export async function getContextFromUrl(context) {
 
 
 
-    let snSimilarity = null;
-    let iqdbSimilarity = null;
+    let failedResults = [];
     
     if (hasImage(context.message)) {
         // 图片搜索和入库在 ArchivedImg 中完成
-        const archiveResult = await ArchivedImg(context);
+        const archiveResult = await ArchivedImg(context, isFromReply);
         isImg = true;
         
         // 如果有成功入库的结果，直接返回 true（已处理完成）
@@ -72,10 +73,9 @@ export async function getContextFromUrl(context) {
             return { type: '_processed' }; // 特殊标记，表示已处理
         }
         
-        // 没有匹配结果时，记录相似度用于显示
-        if (archiveResult) {
-            snSimilarity = archiveResult.snSimilarity;
-            iqdbSimilarity = archiveResult.iqdbSimilarity;
+        // 没有匹配结果时，记录失败的相似度信息用于显示
+        if (archiveResult && archiveResult.failedResults) {
+            failedResults = archiveResult.failedResults;
         }
     } else {
         // 非图片消息，直接解析URL
@@ -110,16 +110,35 @@ export async function getContextFromUrl(context) {
     // 如果没有找到匹配项，返回false
     if (isImg) {
         let notFoundMsg = `未搜索到收录图站`;
-        // 仅当有成功获取到相似度时才追加显示
-        const accParts = [];
-        if (snSimilarity != null) {
-            accParts.push(`Acc1: ${Math.round(snSimilarity)}`);
-        }
-        if (iqdbSimilarity != null) {
-            accParts.push(`Acc2: ${Math.round(iqdbSimilarity)}`);
-        }
-        if (accParts.length > 0) {
-            notFoundMsg += `\n${accParts.join(' ')}`;
+        
+        // 多图全部失败时，逐行显示每张图的ACC信息
+        if (failedResults.length > 1) {
+            // 多张图片全部失败
+            for (const failed of failedResults) {
+                const accParts = [];
+                if (failed.snSimilarity != null) {
+                    accParts.push(`Acc1: ${Math.round(failed.snSimilarity)}`);
+                }
+                if (failed.iqdbSimilarity != null) {
+                    accParts.push(`Acc2: ${Math.round(failed.iqdbSimilarity)}`);
+                }
+                if (accParts.length > 0) {
+                    notFoundMsg += `\n[${failed.index}] ${accParts.join(' ')}`;
+                }
+            }
+        } else if (failedResults.length === 1) {
+            // 单张图片失败
+            const failed = failedResults[0];
+            const accParts = [];
+            if (failed.snSimilarity != null) {
+                accParts.push(`Acc1: ${Math.round(failed.snSimilarity)}`);
+            }
+            if (failed.iqdbSimilarity != null) {
+                accParts.push(`Acc2: ${Math.round(failed.iqdbSimilarity)}`);
+            }
+            if (accParts.length > 0) {
+                notFoundMsg += `\n${accParts.join(' ')}`;
+            }
         }
         global.replyMsg(context, notFoundMsg, false, true);
     }
@@ -761,9 +780,10 @@ async function handleTagsAndPlayVoice(tags, context) {
 /**
  * 图片搜索存档功能，仅使用saucenao和Iqdb，搜索完一张就立即处理入库
  * @param {Object} context 消息上下文
- * @returns {Promise<{hasResult: boolean, snSimilarity: number|null, iqdbSimilarity: number|null}>} 搜索结果对象
+ * @param {boolean} isFromReply 是否来自引用消息（用于决定是否使用reply模式）
+ * @returns {Promise<{hasResult: boolean, failedResults: Array<{index: number, snSimilarity: number|null, iqdbSimilarity: number|null}>}>} 搜索结果对象
  */
-export async function ArchivedImg(context) {
+export async function ArchivedImg(context, isFromReply = false) {
 
     // 得到图片链接并搜图
     const msg = context.message;
@@ -775,11 +795,10 @@ export async function ArchivedImg(context) {
         global.replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
     }
 
-    if (!imgs.length) return { hasResult: false, snSimilarity: null, iqdbSimilarity: null };
+    if (!imgs.length) return { hasResult: false, failedResults: [] };
 
     let hasAnyResult = false; // 是否有任何一张图片成功入库
-    let lastSnSimilarity = null; // 最后一张图的 saucenao 相似度（用于显示）
-    let lastIqdbSimilarity = null; // 最后一张图的 iqdb 相似度（用于显示）
+    const failedResults = []; // 记录所有失败图片的相似度信息
 
     for (let i = 0; i < imgs.length; i++) {
         const img = imgs[i];
@@ -787,7 +806,7 @@ export async function ArchivedImg(context) {
         // 如果不是第一张图，等待10秒避免触发限流
         if (i > 0) {
             console.log(`图片存档 - 等待10秒后搜索第 ${i + 1} 张图片`);
-            await new Promise(resolve => setTimeout(resolve, 10000));
+            await new Promise(resolve => setTimeout(resolve, 5000));
         }
         
         console.log(`图片存档 - 开始收藏 ${i + 1}/${imgs.length}:`, img.url);
@@ -811,7 +830,6 @@ export async function ArchivedImg(context) {
         // 记录 saucenao 相似度（仅在搜索成功时）
         if (snRes.success && snRes.similarity != null) {
             snSimilarity = snRes.similarity;
-            lastSnSimilarity = snSimilarity;
         }
 
         if (!snRes.success || snRes.lowAcc) {
@@ -833,7 +851,6 @@ export async function ArchivedImg(context) {
                 // 记录 iqdb 相似度（仅在搜索成功时）
                 if (iqdbSuc && iqdbSim != null) {
                     iqdbSimilarity = iqdbSim;
-                    lastIqdbSimilarity = iqdbSimilarity;
                 }
                 
                 const cleanMsg = ReturnMsg.replace(/base64:\/\/[^\]]+/, 'base64://[image_data]');
@@ -854,17 +871,22 @@ export async function ArchivedImg(context) {
             const illustObj = matchUrlToIllust(resultUrl);
             if (illustObj) {
                 console.log(`图片存档 - 匹配到图站 ${i + 1}/${imgs.length}:`, illustObj);
-                await processIllustObj(illustObj, context);
+                await processIllustObj(illustObj, context, isFromReply);
                 hasAnyResult = true;
+            } else {
+                // 有搜索结果URL但无法匹配到图站，记录失败
+                failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
             }
+        } else {
+            // 没有搜索结果，记录失败
+            failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
         }
     }
 
-    // 返回是否有成功入库的结果，以及最后一张图的相似度（用于未收录时显示）
+    // 返回是否有成功入库的结果，以及所有失败图片的相似度信息
     return { 
         hasResult: hasAnyResult, 
-        snSimilarity: lastSnSimilarity, 
-        iqdbSimilarity: lastIqdbSimilarity 
+        failedResults 
     };
 }
 
@@ -905,33 +927,45 @@ function matchUrlToIllust(resultUrl) {
 }
 
 // 处理单个作品入库
-async function processIllustObj(illustObj, context) {
+async function processIllustObj(illustObj, context, shouldReply = true) {
     if (illustObj.type === 'pixiv') {
         try {
             const result = await illustAddPixiv(illustObj.id, context);
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
-                replyPixivRatingMsg(illustObj.id, context, `${result.message}:${result.author}<${result.title}>\n${result.caption}`);
+                // 构建合并消息（参考Danbooru的实现方式）
+                const texts = [];
+                texts.push(`${result.message}:${result.author}<${result.title}>\n${result.caption}`);
+                
                 if (result.isR18) {
-                    global.replyMsg(context, 'R18？？？  不可以涩涩！ 死刑！', false, true);
+                    texts.push('R18？？？  不可以涩涩！ 死刑！');
+                    replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
                 } else if (result.meta_single_page) {
                     const url = getSetuUrl(proxy, result.meta_large);
                     if (url) {
                         try {
-                            replyPixivRatingMsg(illustObj.id, context, await CQ.imgPreDl(url));
+                            const imgCQ = await CQ.imgPreDl(url);
+                            texts.push(imgCQ);
                         } catch (e) {
                             console.error('投稿 - pixiv.meta_single_page 图片预下载失败:', e);
                         }
                     }
+                    replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
                 } else if (result.meta_large_pages) {
-                    const preMsg = result.meta_large_pages.map(pageUrl => {
+                    const imgCQs = result.meta_large_pages.map(pageUrl => {
                         const url = getSetuUrl(proxy, pageUrl);
                         if (url) {
                             return CQ.img(url);
                         }
                     }).filter(Boolean);
-                    replyPixivRatingMsg(illustObj.id, context, preMsg.join(''));
+                    if (imgCQs.length > 0) {
+                        texts.push(imgCQs.join(''));
+                    }
+                    replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
+                } else {
+                    // 没有图片信息，只发送文本
+                    replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
                 }
                 replyCollectReply(context, result);
             }
@@ -972,23 +1006,23 @@ async function processIllustObj(illustObj, context) {
                                 const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
                                 const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
                                 texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
                                 texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
                             }
                         } else {
                             try {
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: true, allowUrlFallback: false });
                                 texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - 所有方式失败，降级为URL直发:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
                                 texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
                             }
                         }
                         replyCollectReply(context, result);
@@ -998,7 +1032,7 @@ async function processIllustObj(illustObj, context) {
                 } else {
                     try {
                         texts.push('（已收藏）');
-                        replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), true);
+                        replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
                         replyCollectReply(context, result);
                     } catch (e) {
                         console.error('投稿 - 处理缺图权限出错:', e);
