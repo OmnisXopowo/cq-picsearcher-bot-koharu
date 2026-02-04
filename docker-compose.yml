@@ -8,3 +8,19 @@ services:
     volumes:
       - ./data:/app/data
       - ./config.jsonc:/app/config.jsonc
+
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    platform: linux/amd64
+    restart: always
+    ports:
+      - "8191:8191"
+    environment:
+      - LOG_LEVEL=info
+      - LOG_HTML=false
+      - CAPTCHA_SOLVER=none
+      - TZ=Asia/Shanghai
+      # 先不使用代理启动，确保服务正常
+      # 如需代理，取消下面注释（需要在 Clash 中开启"允许局域网"）
+      # - HTTP_PROXY=http://192.168.1.150:7890
+      # - HTTPS_PROXY=http://192.168.1.150:7890

@@ -21,7 +21,7 @@ async function IqDB(url) {
   if (discolor) params.append('forcegray', 'on');
 
   try {
-    const { data } = await AxiosProxy.post('https://danbooru.iqdb.org/', params, {
+    const { data } = await AxiosProxy.searchPost('https://danbooru.iqdb.org/', params, {
       headers,
       validateStatus: status => (200 <= status && status < 500),
     });

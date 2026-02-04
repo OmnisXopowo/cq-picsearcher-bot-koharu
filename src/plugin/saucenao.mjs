@@ -294,7 +294,7 @@ async function getSearchResult(host, api_key, img, db = 999) {
     if (path) {
       const form = new FormData();
       form.append('file', readFileSync(path), 'image');
-      return Axios.post(url, form, {
+      return Axios.searchPost(url, form, {
         params,
         headers: form.getHeaders(),
       });
@@ -302,7 +302,7 @@ async function getSearchResult(host, api_key, img, db = 999) {
   }
 
   if (img.isUrlValid) {
-    return Axios.get(`${host}/search.php`, {
+    return Axios.searchGet(`${host}/search.php`, {
       params: {
         ...params,
         url: img.url,

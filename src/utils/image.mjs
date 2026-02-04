@@ -16,10 +16,33 @@ import { retryAsync, retryGet } from './retry.mjs';
 
 const imageSizeAsync = promisify(imageSize);
 
+/**
+ * 将 i.pximg.net URL 替换为配置的代理域名
+ * @param {string} url
+ * @returns {string}
+ */
+const replacePximgUrl = (url) => {
+  if (!/^https?:\/\/i\.pximg\.net\//.test(url)) return url;
+  
+  const pximgProxy = global.config?.bot?.setu?.pximgProxy?.trim();
+  if (!pximgProxy || /{{.+}}/.test(pximgProxy)) return url;
+  
+  try {
+    const path = new URL(url).pathname.replace(/^\//, '');
+    const proxyUrl = new URL(path, pximgProxy).href;
+    console.log(`[图片下载] Pixiv URL 代理转换: i.pximg.net -> ${new URL(pximgProxy).hostname}`);
+    return proxyUrl;
+  } catch (e) {
+    return url;
+  }
+};
+
 export const getCqImg64FromUrl = async (url, type = undefined) => {
   try {
+    // 自动替换 i.pximg.net 为代理域名
+    const targetUrl = replacePximgUrl(url);
     const base64 = await retryAsync(
-      () => Axios.getBase64(url),
+      () => Axios.getBase64(targetUrl),
       3,
       e => e.code === 'ECONNRESET',
     );
@@ -33,8 +56,10 @@ export const getCqImg64FromUrl = async (url, type = undefined) => {
 
 export const getAntiShieldedCqImg64FromUrl = async (url, mode, type = undefined) => {
   try {
+    // 自动替换 i.pximg.net 为代理域名
+    const targetUrl = replacePximgUrl(url);
     const arrayBuffer = await retryAsync(
-      () => Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data),
+      () => Axios.get(targetUrl, { responseType: 'arraybuffer' }).then(r => r.data),
       3,
       e => e.code === 'ECONNRESET',
     );
@@ -57,7 +82,9 @@ const dlImgLimit = promiseLimit(4);
 export const dlImgToCache = async (url, config = {}, limit = false) => {
   const cachedPath = getCache(url);
   if (cachedPath) return cachedPath;
-  const dlFn = () => retryGet(url, { responseType: 'arraybuffer', ...config });
+  // 自动替换 i.pximg.net 为代理域名
+  const targetUrl = replacePximgUrl(url);
+  const dlFn = () => retryGet(targetUrl, { responseType: 'arraybuffer', ...config });
   const { data } = await (limit ? dlImgLimit(dlFn) : dlFn());
   return createCache(url, Buffer.from(data));
 };
@@ -70,7 +97,9 @@ export const dlImgToCache = async (url, config = {}, limit = false) => {
 export const dlImgToCacheBuffer = async (url, config = {}, limit = false) => {
   const cachedPath = getCache(url);
   if (cachedPath) return readFileSync(cachedPath);
-  const dlFn = () => retryGet(url, { responseType: 'arraybuffer', ...config });
+  // 自动替换 i.pximg.net 为代理域名
+  const targetUrl = replacePximgUrl(url);
+  const dlFn = () => retryGet(targetUrl, { responseType: 'arraybuffer', ...config });
   const { data } = await (limit ? dlImgLimit(dlFn) : dlFn());
   const buffer = Buffer.from(data);
   createCache(url, buffer);

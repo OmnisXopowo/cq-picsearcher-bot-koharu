@@ -244,6 +244,101 @@ class Puppeteer {
     }
   }
 
+  /**
+   * 使用 Puppeteer 下载图片（绕过 Cloudflare）
+   * 拦截网络请求获取图片二进制数据
+   * @param {string} url 图片 URL
+   * @param {object} options 配置选项
+   * @returns {Promise<Buffer>} 图片二进制数据
+   */
+  async downloadImage(url, options = {}) {
+    await this.launch();
+    const page = await this.browser.newPage();
+    
+    try {
+      // 设置指纹
+      await this.setPageFingerprint(page);
+      
+      console.log(`[Puppeteer] 下载图片: ${url}`);
+      
+      // 启用请求拦截
+      await page.setRequestInterception(true);
+      
+      let imageBuffer = null;
+      
+      // 拦截请求，只允许图片资源
+      page.on('request', request => {
+        const resourceType = request.resourceType();
+        if (resourceType === 'image' || request.url() === url) {
+          request.continue();
+        } else if (resourceType === 'document') {
+          // 允许初始导航
+          request.continue();
+        } else {
+          // 阻止其他资源加载
+          request.abort();
+        }
+      });
+      
+      // 监听响应，捕获图片数据
+      page.on('response', async response => {
+        const responseUrl = response.url();
+        if (responseUrl === url || responseUrl.includes(new URL(url).pathname)) {
+          try {
+            const buffer = await response.buffer();
+            if (buffer && buffer.length > 1000) { // 确保不是错误页面
+              imageBuffer = buffer;
+              console.log(`[Puppeteer] 捕获图片响应: ${buffer.length} bytes`);
+            }
+          } catch (e) {
+            // 忽略无法获取 buffer 的响应
+          }
+        }
+      });
+      
+      // 导航到图片 URL
+      await page.goto(url, {
+        waitUntil: 'networkidle0',
+        timeout: options.timeout || 60000
+      });
+      
+      // 如果通过拦截没有获取到，尝试从页面 img 标签获取
+      if (!imageBuffer) {
+        // 等待图片加载
+        await page.waitForSelector('img', { timeout: 10000 }).catch(() => {});
+        
+        // 尝试通过 fetch 获取图片
+        imageBuffer = await page.evaluate(async (imgUrl) => {
+          try {
+            const response = await fetch(imgUrl);
+            const arrayBuffer = await response.arrayBuffer();
+            return Array.from(new Uint8Array(arrayBuffer));
+          } catch (e) {
+            return null;
+          }
+        }, url);
+        
+        if (imageBuffer) {
+          imageBuffer = Buffer.from(imageBuffer);
+          console.log(`[Puppeteer] 通过 fetch 获取图片: ${imageBuffer.length} bytes`);
+        }
+      }
+      
+      if (!imageBuffer) {
+        throw new Error('无法获取图片数据');
+      }
+      
+      console.log(`[Puppeteer] ✓ 图片下载成功: ${imageBuffer.length} bytes`);
+      return imageBuffer;
+      
+    } catch (e) {
+      console.error(`[Puppeteer] ✗ 图片下载失败: ${e.message}`);
+      throw e;
+    } finally {
+      await page.close();
+    }
+  }
+
   // 关闭浏览器
   async close() {
     if (this.browser) {

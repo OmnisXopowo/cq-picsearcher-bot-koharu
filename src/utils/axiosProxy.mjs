@@ -37,7 +37,7 @@ emitter.onConfigLoad(() => {
  * @returns {Array<{host: string, port: number, protocol: string}>}
  */
 function getDownloadProxies() {
-  const proxies = global.config?.downloadProxies;
+  const proxies = global.config?.bot?.downloadProxies;
   if (Array.isArray(proxies) && proxies.length > 0) {
     return proxies;
   }
@@ -112,13 +112,27 @@ async function requestWithFallback(method, instance, url, data, config) {
 
 /**
  * 专用的下载方法：支持多代理轮询，所有代理失败后降级为直连
+ * 对于 Danbooru CDN，支持 Puppeteer 和 FlareSolverr 作为回退方案
  * @param {string} url
- * @param {{useProxy?: boolean, config?: object}} opts
+ * @param {{useProxy?: boolean, config?: object, usePuppeteer?: boolean, useFlareSolverr?: boolean}} opts
  * @returns {Promise<import('axios').AxiosResponse>}
  */
 async function download(url, opts = {}) {
   const { useProxy = true, config = {} } = opts;
   const axiosConfig = { ...config, responseType: 'arraybuffer' };
+  
+  // 判断是否为 Danbooru CDN
+  const isDanbooruCDN = /cdn\.donmai\.us/.test(url);
+  
+  // 为 Danbooru CDN 添加必要的请求头（绕过防盗链）
+  if (isDanbooruCDN) {
+    axiosConfig.headers = {
+      ...axiosConfig.headers,
+      'Referer': 'https://danbooru.donmai.us/',
+      'User-Agent': CHROME_UA
+    };
+    console.log('[下载] 检测到 Danbooru CDN，已添加 Referer 请求头');
+  }
   
   if (!useProxy) {
     // 不使用代理，直接使用共享 client
@@ -157,13 +171,88 @@ async function download(url, opts = {}) {
     errors.push({ proxy: null, error });
   }
   
+  // Layer 3: 对于 Danbooru CDN，尝试 Puppeteer 绕过 Cloudflare
+  if (isDanbooruCDN) {
+    try {
+      console.log('[下载] 尝试使用 Puppeteer 绕过 Cloudflare...');
+      const { puppeteer } = await import('../../libs/puppeteer/index.mjs');
+      const imageBuffer = await puppeteer.downloadImage(url);
+      console.log(`[下载] ✓ Puppeteer 成功 (${imageBuffer.length} bytes)`);
+      return { data: imageBuffer };
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      console.warn(`[下载] ✗ Puppeteer 失败: ${errorMsg}`);
+      errors.push({ method: 'Puppeteer', error });
+    }
+    
+    // Layer 4: 尝试 FlareSolverr（如果配置了的话）
+    const fsConfig = global.config?.flaresolverr;
+    if (fsConfig?.url && fsConfig?.enableForDanbooruCDN) {
+      try {
+        console.log('[下载] 尝试使用 FlareSolverr 绕过 Cloudflare...');
+        const imageBuffer = await downloadWithFlareSolverr(url, fsConfig);
+        console.log(`[下载] ✓ FlareSolverr 成功 (${imageBuffer.length} bytes)`);
+        return { data: imageBuffer };
+      } catch (error) {
+        const errorMsg = error.message || String(error);
+        console.error(`[下载] ✗ FlareSolverr 失败: ${errorMsg}`);
+        errors.push({ method: 'FlareSolverr', error });
+      }
+    }
+  }
+  
   // 所有尝试失败，抛出聚合错误
-  const errorSummary = errors.map(e => 
-    `${e.proxy ? `${e.proxy.host}:${e.proxy.port}` : '直连'}: ${e.error.message || String(e.error)}`
-  ).join('; ');
+  const errorSummary = errors.map(e => {
+    if (e.proxy) return `${e.proxy.host}:${e.proxy.port}: ${e.error.message || String(e.error)}`;
+    if (e.method) return `${e.method}: ${e.error.message || String(e.error)}`;
+    return `直连: ${e.error.message || String(e.error)}`;
+  }).join('; ');
   const aggregatedError = new Error(`所有下载方式失败: ${errorSummary}`);
   aggregatedError.errors = errors;
   throw aggregatedError;
+}
+
+/**
+ * 使用 FlareSolverr 下载图片
+ * FlareSolverr 会返回 HTML 页面，需要解析 img src 并用获取的 Cookie 重新请求
+ * @param {string} url 图片 URL
+ * @param {object} fsConfig FlareSolverr 配置
+ * @returns {Promise<Buffer>}
+ */
+async function downloadWithFlareSolverr(url, fsConfig) {
+  const axios = (await import('axios')).default;
+  
+  // 调用 FlareSolverr API
+  const response = await axios.post(`${fsConfig.url}/v1`, {
+    cmd: 'request.get',
+    url: url,
+    session: fsConfig.session || undefined,
+    maxTimeout: fsConfig.maxTimeout || 60000
+  }, { timeout: 90000 });
+  
+  if (response.data.status !== 'ok') {
+    throw new Error(`FlareSolverr 返回错误: ${response.data.message}`);
+  }
+  
+  const solution = response.data.solution;
+  
+  // 构建 Cookie 字符串
+  const cookieStr = solution.cookies
+    .map(c => `${c.name}=${c.value}`)
+    .join('; ');
+  
+  // 使用获取的 Cookie 和 User-Agent 重新请求图片
+  const imageResponse = await axios.get(url, {
+    responseType: 'arraybuffer',
+    headers: {
+      'Cookie': cookieStr,
+      'User-Agent': solution.userAgent,
+      'Referer': 'https://danbooru.donmai.us/'
+    },
+    timeout: 30000
+  });
+  
+  return Buffer.from(imageResponse.data);
 }
 
 // 针对 client/cfClient 的便捷 get/post 导出函数
@@ -173,6 +262,82 @@ async function get(url, config = {}) {
 
 async function post(url, data = {}, config = {}) {
   return requestWithFallback('post', client, url, data, config).then(r => r.data ? r : r);
+}
+
+/**
+ * 搜索专用的多代理请求封装：支持多代理轮询，所有代理失败后降级为直连
+ * @param {'get'|'post'} method 请求方法
+ * @param {string} url 请求URL
+ * @param {any} data POST数据（GET请求时为undefined）
+ * @param {object} config axios配置
+ * @returns {Promise<import('axios').AxiosResponse>}
+ */
+async function searchRequest(method, url, data, config = {}) {
+  const proxies = getDownloadProxies();
+  const timeout = global.config?.bot?.proxyTimeout || 15000;
+  const errors = [];
+  
+  // Layer 1: 多代理轮询
+  for (const proxyConfig of proxies) {
+    const proxyLabel = `${proxyConfig.host}:${proxyConfig.port}`;
+    try {
+      const proxyInstance = createProxyAxiosInstance(proxyConfig);
+      console.log(`[搜索请求] 尝试代理 ${proxyLabel} (${proxyConfig.protocol || 'http'})`);
+      
+      let response;
+      if (method === 'get') {
+        response = await proxyInstance.get(url, { ...config, timeout });
+      } else if (method === 'post') {
+        response = await proxyInstance.post(url, data, { ...config, timeout });
+      }
+      
+      console.log(`[搜索请求] ✓ 代理 ${proxyLabel} 成功`);
+      return response;
+    } catch (error) {
+      const errorMsg = error.message || String(error);
+      console.warn(`[搜索请求] ✗ 代理 ${proxyLabel} 失败: ${errorMsg}`);
+      errors.push({ proxy: proxyConfig, error });
+    }
+  }
+  
+  // Layer 2: 直连降级（使用共享 client）
+  try {
+    console.log(`[搜索请求] 所有代理失败 (${errors.length}个)，尝试直连降级`);
+    let response;
+    if (method === 'get') {
+      response = await client.get(url, { ...config, timeout });
+    } else if (method === 'post') {
+      response = await client.post(url, data, { ...config, timeout });
+    }
+    console.log(`[搜索请求] ✓ 直连成功`);
+    return response;
+  } catch (error) {
+    const errorMsg = error.message || String(error);
+    console.error(`[搜索请求] ✗ 直连也失败: ${errorMsg}`);
+    errors.push({ proxy: null, error });
+  }
+  
+  // 所有尝试失败，抛出聚合错误
+  const errorSummary = errors.map(e => 
+    `${e.proxy ? `${e.proxy.host}:${e.proxy.port}` : '直连'}: ${e.error.message || String(e.error)}`
+  ).join('; ');
+  const aggregatedError = new Error(`所有搜索请求方式失败: ${errorSummary}`);
+  aggregatedError.errors = errors;
+  throw aggregatedError;
+}
+
+/**
+ * 搜索专用 GET 请求（支持多代理故障转移）
+ */
+async function searchGet(url, config = {}) {
+  return searchRequest('get', url, undefined, config);
+}
+
+/**
+ * 搜索专用 POST 请求（支持多代理故障转移）
+ */
+async function searchPost(url, data = {}, config = {}) {
+  return searchRequest('post', url, data, config);
 }
 
 async function cfGet(url, config = {}) {
@@ -204,6 +369,9 @@ export default {
     return requestWithFallback('get', cfClient, url, undefined, { ...config, responseType: 'arraybuffer' })
       .then(({ data }) => Buffer.from(data).toString('base64'));
   },
+  // 搜索专用请求（支持多代理故障转移）
+  searchGet,
+  searchPost,
   // 图片下载助手，保留向后兼容接口
   download,
 };
