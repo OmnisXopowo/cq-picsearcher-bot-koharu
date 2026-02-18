@@ -19,9 +19,9 @@
 import AxiosProxy from '../../utils/axiosProxy.mjs';
 import CQ from '../../utils/CQcode.mjs';
 import dailyCount from '../../utils/dailyCount.mjs';
+import { getRawMessage } from '../../utils/message.mjs';
 import { getKeyObject, setKeyObject } from '../../utils/redisClient.mjs';
 import { createJWT } from '../AImodule/auth.mjs';
-import { getRawMessage } from '../../utils/message.mjs';
 
 // 日志前缀
 const LOG_PREFIX = '[CyberCourt]';

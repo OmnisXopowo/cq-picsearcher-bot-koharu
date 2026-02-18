@@ -1,14 +1,13 @@
-import { debug } from 'console';
-import _ from 'lodash-es';
 import Axios from 'axios';
+import _ from 'lodash-es';
 import { getImgs, hasImage } from '../index.mjs';
 import axios from '../utils/axiosProxy.mjs';
-import { createCache, getCache } from '../utils/cache.mjs';
+import { createCache } from '../utils/cache.mjs';
 import { CooldownManager } from '../utils/CooldownManager.mjs';
 import CQ from '../utils/CQcode.mjs';
-import { checkImageHWRatio, getAntiShieldedCqImg64FromUrl } from '../utils/image.mjs';
+import { getGroupName } from '../utils/groupInfoCache.mjs';
+import { checkImageHWRatio } from '../utils/image.mjs';
 import logError from '../utils/logError.mjs';
-import logger from '../utils/logger.mjs';
 import { getRawMessage } from '../utils/message.mjs';
 import { getKeyObject, setKeyObject } from '../utils/redisClient.mjs';
 import voiceManager from '../voicesBank/VoiceManager.mjs';
@@ -27,11 +26,36 @@ const setting = global.config.bot.setu;
 const proxy = setting.pximgProxy.trim();
 const cooldownManager = new CooldownManager();
 
+/**
+ * 从 context 中提取用户显示名称（用于统计展示脱敏）
+ * 优先使用群名片 > 昵称
+ * @param {object} context 消息上下文
+ * @returns {string|undefined}
+ */
+function getDisplayName(context) {
+    return context.sender?.card || context.sender?.nickname || undefined;
+}
+
+/**
+ * 获取用于 API 提交的完整上下文信息（异步）
+ * @param {object} context 消息上下文
+ * @returns {Promise<{group: number, user: number, display_name: string|undefined, group_name: string|undefined}>}
+ */
+async function getApiContext(context) {
+    const groupName = context.group_id ? await getGroupName(context.group_id) : undefined;
+    return {
+        group: context.group_id ?? 0,
+        user: context.user_id,
+        display_name: getDisplayName(context),
+        group_name: groupName
+    };
+}
+
 export async function getContextFromUrl(context) {
     let isImg = false;
     let isFromReply = false; // 标记是否来自引用消息
     // 修改为同时支持/收藏和/post命令
-    let Url = context.message.replace('/收藏', '').replace(/^\/post/, '');
+    const Url = context.message.replace('/收藏', '').replace(/^\/post/, '');
     try {
         // 判断是否是回复的消息
         const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
@@ -148,10 +172,10 @@ export async function getContextFromUrl(context) {
 // 异步方法添加E-Hentai作品信息
 async function illustAddEhentai(url, context) {
     try {
+        const apiContext = await getApiContext(context);
         const response = await koharuAxios.post('/api/ehentai/add', {
             url,
-            group: context.group_id ?? 0,
-            user: context.user_id
+            ...apiContext
         });
         return response.data;
     } catch (error) {
@@ -162,10 +186,10 @@ async function illustAddEhentai(url, context) {
 // 异步方法添加NHentai作品信息
 async function illustAddNhentai(gid, context) {
     try {
+        const apiContext = await getApiContext(context);
         const response = await koharuAxios.post('/api/ehentai/nhentai-add', {
             gid,
-            group: context.group_id ?? 0,
-            user: context.user_id
+            ...apiContext
         });
         return response.data;
     } catch (error) {
@@ -173,26 +197,12 @@ async function illustAddNhentai(gid, context) {
         throw error;
     }
 }
-// 异步方法获取作品排行
-async function getIllustRanking(mode = 'day', date = null) {
-    try {
-        const response = await koharuAxios.get('/api/pixiv/ranking', {
-            params: { mode, date }
-        });
-        return response.data;
-    } catch (error) {
-        console.error('书库 - 排行获取失败:', error);
-        throw error; // 将错误向上抛出，以便可以在调用处处理
-    }
-}
-
 // 异步方法添加作品信息
 async function illustAddPixiv(illustId, context) {
-
+    const apiContext = await getApiContext(context);
     const response = await koharuAxios.post('/api/pixiv/add', {
         illust: illustId,
-        group: context.group_id ?? 0,
-        user: context.user_id
+        ...apiContext
     }).catch(function (error) {
         throw error;
     });
@@ -200,11 +210,10 @@ async function illustAddPixiv(illustId, context) {
 }
 
 async function illustAddDanbooru(illustId, context) {
-
+    const apiContext = await getApiContext(context);
     const response = await koharuAxios.post('/api/danbooru/add', {
         illust: illustId,
-        group: context.group_id ?? 0,
-        user: context.user_id
+        ...apiContext
     }).catch(function (error) {
         throw error;
     });
@@ -213,7 +222,7 @@ async function illustAddDanbooru(illustId, context) {
 
 
 // 异步方法为作品打分
-export function illustRating(illustObj, context, rate) {
+export async function illustRating(illustObj, context, rate) {
 
     let url;
     if (illustObj.type === 'pixiv') {
@@ -222,11 +231,11 @@ export function illustRating(illustObj, context, rate) {
     if (illustObj.type === 'danbooru') {
         url = '/api/danbooru/rate';
     }
+    const apiContext = await getApiContext(context);
     koharuAxios.post(url, {
         illust: illustObj.id,
-        group: context.group_id ?? 0,
-        user: context.user_id,
-        rate
+        rate,
+        ...apiContext
     }).then(result => {
         if (result.data.error) {
             global.replyMsg(context, result.error, false, true);
@@ -282,7 +291,6 @@ export function illustRemove(illustObj, context) {
 
 
 export async function getCommon(context) {
-    const setting = global.config.bot.setu;
     const replys = global.config.bot.replys;
 
 
@@ -334,7 +342,9 @@ export async function getCommon(context) {
 
     koharuAxios.post('/api/common/search', {
         query,
-        limit: 1
+        limit: 1,
+        qq_id: context.user_id,
+        group_id: context.group_id ?? 0
     }).then(async response => {
         if (response.data.error) {
             global.replyMsg(context, response.data.error, false, true);
@@ -401,6 +411,7 @@ export async function getCommon(context) {
                             if (url) {
                                 return CQ.img(url);
                             }
+                            return null;
                         }).filter(Boolean);
                         replyPixivRatingMsg(illust.id_illust, context, preMsg.join(''), trace);
                     }
@@ -480,9 +491,11 @@ export async function pushDoujinshi(context) {
         console.log('推本 - 搜索关键词:', keyword);
 
         // 调用新的API接口
+        const apiContext = await getApiContext(context);
         const response = await koharuAxios.post('/api/ehentai/search-and-add', {
             keyword,
-            use_exhentai: true
+            use_exhentai: true,
+            ...apiContext
         });
 
         const result = response.data;
@@ -601,10 +614,10 @@ export async function pushDoujinshi(context) {
  */
 export async function handleEhentaiSelect(link, context) {
     try {
+        const apiContext = await getApiContext(context);
         const response = await koharuAxios.post('/api/ehentai/add', {
             url: link,
-            group: context.group_id ?? 0,
-            user: context.user_id
+            ...apiContext
         });
 
         const result = response.data;
@@ -641,14 +654,6 @@ export async function handleEhentaiSelect(link, context) {
         }
         return true;
     }
-}
-
-function getRandomItem(arr) {
-    if (Array.isArray(arr) && arr.length > 0) {
-        const randomIndex = Math.floor(Math.random() * arr.length);
-        return arr[randomIndex];
-    }
-    return undefined; // 如果不是数组或数组为空，则返回undefined
 }
 
 function ratingFormatter(formattedAverage) {
@@ -958,6 +963,7 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
                         if (url) {
                             return CQ.img(url);
                         }
+                        return null;
                     }).filter(Boolean);
                     if (imgCQs.length > 0) {
                         texts.push(imgCQs.join(''));
@@ -991,16 +997,6 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
                     const imageUrl = result.large_file_url || result.file_url;
                     try {
                         if (!imageUrl.startsWith('https://cdn.donmai.us/')) {
-                            let imgUrl = imageUrl;
-                            if (setting.sendPximgProxies.length) {
-                                for (const imgProxy of setting.sendPximgProxies) {
-                                    const path = new URL(imageUrl).pathname.replace(/^\//, '');
-                                    if (!/{{.+}}/.test(imgProxy)) {
-                                        imgUrl = new URL(path, imgProxy).href;
-                                        break;
-                                    }
-                                }
-                            }
                             try {
                                 const Rvhost = global.config.reverseProxy;
                                 const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
@@ -1147,16 +1143,14 @@ export function formatTraceMessage(trace) {
     
     const lines = [];
     
-    // 头部信息：query + parser + r18
+    // 头部信息：query
     const query = trace.original_query || '';
-    const parser = trace.parser_used || 'unknown';
     lines.push(`🔍query: "${query}"`);
     
     // 分词信息（如果有）
     const tokenization = trace.tokenization;
     if (tokenization && tokenization.tokens && tokenization.tokens.length > 0) {
         const tokens = tokenization.tokens;
-        const rebuilt = tokenization.rebuilt_query || tokens.join('&');
         lines.push(`tokenization:\n'${tokenization.original_query}'->[${tokens.map(t => `'${t}'`).join(', ')}]`);
     }
     
