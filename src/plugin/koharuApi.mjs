@@ -184,20 +184,8 @@ async function illustAddEhentai(url, context) {
         throw error;
     }
 }
-// 异步方法添加NHentai作品信息
-async function illustAddNhentai(gid, context) {
-    try {
-        const apiContext = await getApiContext(context);
-        const response = await koharuAxios.post('/api/ehentai/nhentai-add', {
-            gid,
-            ...apiContext
-        });
-        return response.data;
-    } catch (error) {
-        console.error('收藏 - NHentai 添加失败:', error);
-        throw error;
-    }
-}
+// NHentai 直接收录已移除（nhentai-add 接口已下线）
+// 收藏 nhentai 链接时通过 processIllustObj type='nhentai' 分支提示用户
 // 异步方法添加作品信息
 async function illustAddPixiv(illustId, context) {
     const apiContext = await getApiContext(context);
@@ -493,9 +481,9 @@ export async function pushDoujinshi(context) {
 
         // 调用新的API接口
         const apiContext = await getApiContext(context);
+        // 不传 use_exhentai，启用中文优先四级回退策略
         const response = await koharuAxios.post('/api/ehentai/search-and-add', {
             keyword,
-            use_exhentai: true,
             ...apiContext
         });
 
@@ -504,8 +492,14 @@ export async function pushDoujinshi(context) {
         if (result.action === 'added') {
             // 成功自动入库
             const gallery = result.data.gallery;
-            let msg = `${gallery.rawTitle}\n` +
-                `好书收录📚 ！${gallery.rating}⭐ ${gallery.pageCount}P:`;
+            const searchStrategy = result.data.search_strategy || '';
+            const rating = gallery.realRating || gallery.rating || 0;
+            let msg = `${gallery.rawTitle}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P`;
+
+            if (searchStrategy) {
+                msg += ` [${searchStrategy}]`;
+            }
+            msg += `:`;
 
             // 添加评论内容显示
             if (gallery.comments && gallery.comments.length > 0) {
@@ -523,7 +517,6 @@ export async function pushDoujinshi(context) {
                 let totalLength = 0;
                 const maxLength = 800;
 
-
                 for (let i = 0; i < Math.min(15, filteredComments.length); i++) {
                     const comment = filteredComments[i];
                     const commentLength = comment.length + 3; // +3 for the prefix and newline
@@ -536,41 +529,37 @@ export async function pushDoujinshi(context) {
                     }
                 }
 
-                // 继续添加评论直到达到字数限制
-                // if (commentsToShow.length >= 10) {
-                //     for (let i = 10; i < filteredComments.length; i++) {
-                //         const comment = filteredComments[i];
-                //         const commentLength = comment.length + 3; // +3 for the prefix and newline
-
-                //         if (totalLength + commentLength <= maxLength) {
-                //             commentsToShow.push(comment);
-                //             totalLength += commentLength;
-                //         } else {
-                //             break;
-                //         }
-                //     }
-                // }
-
                 msg += `\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`;
-                console.log('推本 - 结果: 返回消息长度:', msg.length);
-                const ret = await global.replyMsg(context, msg, false, true);
-                console.log('推本 - 发送结果:', ret);
-                if (ret.retcode === 1200) {
-                    console.warn('推本 - 发送结果: 发送失败，可能被禁言或群组被禁言');
-                    const ret1 = await global.replyMsg(context, `好书收录📚 ！${gallery.rating}⭐ ${gallery.pageCount}P:\n${gallery.rawTitle}\n`, false, true);
-                    console.log('推本 - 发送结果: 分步结果1', ret1);
-                    const ret2 = await global.replyMsg(context, `Comments：\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`, false, true);
-                    console.log('推本 - 发送结果: 分步结果2', ret2);
-                }
+            }
 
+            // 先发送封面图
+            if (gallery.cover && gallery.cover.url) {
+                try {
+                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                    await global.replyMsg(context, coverCQ, false, false);
+                } catch (e) {
+                    console.warn('推本 - 封面图下载失败，跳过:', e.message);
+                }
+            }
+
+            // 发送主消息（无论有无评论都必须发送）
+            console.log('推本 - 结果: 返回消息长度:', msg.length);
+            const ret = await global.replyMsg(context, msg, false, true);
+            console.log('推本 - 发送结果:', ret);
+            if (ret?.retcode === 1200) {
+                console.warn('推本 - 发送结果: 发送失败，可能被禁言或群组被禁言');
+                const ret1 = await global.replyMsg(context, `好书收录📚 ！${rating}⭐ ${gallery.pageCount}P:\n${gallery.rawTitle}\n`, false, true);
+                console.log('推本 - 发送结果: 分步结果1', ret1);
             }
 
 
         } else if (result.action === 'select') {
-            // 需要用户选择
+            // 需要用户选择（所有回退策略均无唯一结果）
             const galleries = result.data.galleries;
-            if (galleries.length === 0) {
-                global.replyMsg(context, '没有找到相关结果，请尝试其他关键词', false, true);
+            if (!galleries || galleries.length === 0) {
+                const strategy = result.search_strategy || result.data?.search_strategy || '';
+                const hint = strategy ? `（已尝试: ${strategy}）` : '';
+                global.replyMsg(context, `没有找到相关结果，请尝试其他关键词${hint}`, false, true);
                 return true;
             }
 
@@ -616,33 +605,58 @@ export async function pushDoujinshi(context) {
 export async function handleEhentaiSelect(link, context) {
     try {
         const apiContext = await getApiContext(context);
-        const response = await koharuAxios.post('/api/ehentai/add', {
-            url: link,
+        // 使用 search-and-add 接口处理 URL（支持直接收录 + 中文优先搜索）
+        const response = await koharuAxios.post('/api/ehentai/search-and-add', {
+            keyword: link,
             ...apiContext
         });
 
         const result = response.data;
-        if (result.error) {
-            global.replyMsg(context, result.error, false, true);
-        } else {
-            // 根据返回的 gallery 数据构建消息
-            const gallery = result.gallery || {};
+
+        if (result.action === 'added') {
+            const gallery = result.data.gallery || {};
+            const rating = gallery.realRating || gallery.rating || 0;
             let msg = result.message || '收藏成功';
 
-            if (gallery.title) {
-                msg += `\n标题：${gallery.title}`;
+            if (gallery.rawTitle) {
+                msg += `\n${gallery.rawTitle}`;
+            } else if (result.data && result.data.title) {
+                msg += `\n${result.data.title}`;
             }
 
-            if (gallery.rating !== undefined) {
-                msg += `\n评分：${gallery.rating}⭐`;
+            if (rating) {
+                msg += `\n评分：${rating}⭐`;
             }
 
             if (gallery.pageCount) {
-                msg += `\n页数：${gallery.pageCount}P`;
+                msg += `  ${gallery.pageCount}P`;
             }
 
             msg += `\n链接：${link}`;
 
+            // 发送封面图
+            if (gallery.cover && gallery.cover.url) {
+                try {
+                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                    await global.replyMsg(context, coverCQ, false, false);
+                } catch (e) {
+                    console.warn('收藏 - 封面图下载失败，跳过:', e.message);
+                }
+            }
+            global.replyMsg(context, msg, false, true);
+        } else {
+            // 回退到基础 add 接口
+            const addResponse = await koharuAxios.post('/api/ehentai/add', {
+                url: link,
+                ...apiContext
+            });
+            const addResult = addResponse.data;
+            const addData = addResult.data || {};
+            let msg = addResult.message || '收藏完成';
+            if (addData.title) {
+                msg += `\n${addData.title}`;
+            }
+            msg += `\n链接：${link}`;
             global.replyMsg(context, msg, false, true);
         }
         return true;
