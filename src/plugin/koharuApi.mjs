@@ -23,6 +23,27 @@ const koharuAxios = Axios.create({
     headers: koharuApiToken ? { 'Authorization': `Bearer ${koharuApiToken}` } : {}
 });
 
+// E-Hentai Cookie 配置
+const exhentaiIpbMemberId = global.config.bot.exhentaiIpbMemberId || '';
+const exhentaiIpbPassHash = global.config.bot.exhentaiIpbPassHash || '';
+const exhentaiIgneous = global.config.bot.exhentaiIgneous || '';
+
+// E-Hentai 专用 axios 实例（用于访问 exhentai.org 和 e-hentai.org 的图片）
+const exhentaiAxios = Axios.create({
+    headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+    }
+});
+
+// 如果配置了 E-Hentai cookies，则添加到请求头
+if (exhentaiIpbMemberId && exhentaiIpbPassHash) {
+    exhentaiAxios.defaults.headers.common['Cookie'] = 
+        `ipb_member_id=${exhentaiIpbMemberId}; ` +
+        `ipb_pass_hash=${exhentaiIpbPassHash}` +
+        (exhentaiIgneous ? `; igneous=${exhentaiIgneous}` : '');
+    console.log('[E-Hentai] Cookie 已配置');
+}
+
 const setting = global.config.bot.setu;
 const proxy = setting.pximgProxy.trim();
 const cooldownManager = new CooldownManager();
@@ -540,16 +561,6 @@ export async function pushDoujinshi(context) {
                 msg += `\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`;
             }
 
-            // 仅在用户添加 --sfw 参数时才发送封面图
-            if (shouldSendCover && gallery.cover && gallery.cover.url) {
-                try {
-                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
-                    await global.replyMsg(context, coverCQ, false, false);
-                } catch (e) {
-                    console.warn('推本 - 封面图下载失败，跳过:', e.message);
-                }
-            }
-
             // 发送主消息（无论有无评论都必须发送）
             console.log('推本 - 结果: 返回消息长度:', msg.length);
             const ret = await global.replyMsg(context, msg, false, true);
@@ -558,6 +569,19 @@ export async function pushDoujinshi(context) {
                 console.warn('推本 - 发送结果: 发送失败，可能被禁言或群组被禁言');
                 const ret1 = await global.replyMsg(context, `好书收录📚 ！${rating}⭐ ${gallery.pageCount}P:\n${gallery.rawTitle}\n`, false, true);
                 console.log('推本 - 发送结果: 分步结果1', ret1);
+            }
+
+            // 异步发送封面图，不阻塞主消息发送
+            if (shouldSendCover && gallery.cover && gallery.cover.url) {
+                (async () => {
+                    try {
+                        const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                        await global.replyMsg(context, coverCQ, false, false);
+                        console.log('推本 - 封面图异步发送完成');
+                    } catch (e) {
+                        console.warn('推本 - 封面图下载失败，跳过:', e.message);
+                    }
+                })();
             }
 
 
@@ -643,16 +667,21 @@ export async function handleEhentaiSelect(link, context, shouldSendCover = false
 
             msg += `\n链接：${link}`;
 
-            // 仅在用户添加 --sfw 参数时才发送封面图
-            if (shouldSendCover && gallery.cover && gallery.cover.url) {
-                try {
-                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
-                    await global.replyMsg(context, coverCQ, false, false);
-                } catch (e) {
-                    console.warn('收藏 - 封面图下载失败，跳过:', e.message);
-                }
-            }
+            // 先发送主消息
             global.replyMsg(context, msg, false, true);
+
+            // 异步发送封面图，不阻塞主消息发送
+            if (shouldSendCover && gallery.cover && gallery.cover.url) {
+                (async () => {
+                    try {
+                        const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                        await global.replyMsg(context, coverCQ, false, false);
+                        console.log('收藏 - 封面图异步发送完成');
+                    } catch (e) {
+                        console.warn('收藏 - 封面图下载失败，跳过:', e.message);
+                    }
+                })();
+            }
         } else {
             // 回退到基础 add 接口
             const addResponse = await koharuAxios.post('/api/ehentai/add', {
@@ -1587,6 +1616,7 @@ async function downloadImage(url, context, options = {}) {
     
     let targetUrl = url;
     const host = new URL(url).hostname;
+    const isExhentai = /^(exhentai\.org|e-hentai\.org|s\.exhentai\.org)$/.test(host);
 
     // 【Layer 0】pximgProxy URL域名替换 - 始终应用于 i.pximg.net，不降级
     if (/^https?:\/\/i\.pximg\.net\//.test(url)) {
@@ -1600,6 +1630,21 @@ async function downloadImage(url, context, options = {}) {
     // 【Layer 1-2】尝试下载（多代理轮询 + 直连，在 axios.download 内部实现）
     try {
         console.log(`[图片下载] 开始下载: ${new URL(targetUrl).hostname}${new URL(targetUrl).pathname.substring(0, 50)}...`);
+        
+        // E-Hentai 特殊处理：如果配置了 cookies，优先尝试直连下载
+        if (isExhentai && (exhentaiIpbMemberId && exhentaiIpbPassHash)) {
+            try {
+                console.log(`[E-Hentai] 尝试使用 Cookie 认证下载...`);
+                const response = await exhentaiAxios.get(targetUrl, { responseType: 'arraybuffer', timeout: 30000 });
+                const filepath = createCache(url, Buffer.from(response.data));
+                console.log(`[图片下载] ✓ 成功缓存 (${filepath}, 大小: ${response.data.length} bytes)`);
+                return CQ.img(filepath);
+            } catch (error) {
+                console.warn(`[E-Hentai] Cookie 认证下载失败，尝试代理下载: ${error.message}`);
+                // 如果 cookie 下载失败，继续使用代理方式降级
+            }
+        }
+        
         const response = await axios.download(targetUrl, { useProxy: useNetworkProxy });
         const filepath = createCache(url, Buffer.from(response.data));
         console.log(`[图片下载] ✓ 成功缓存 (${filepath}, 大小: ${response.data.length} bytes)`);

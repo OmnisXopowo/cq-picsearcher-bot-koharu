@@ -118,6 +118,13 @@
     ],
     // 图片下载代理超时时间（毫秒）
     "proxyTimeout": 15000,
+    // E-Hentai/ExHentai Cookie 配置（用于访问需要登录的内容），留空则不使用
+    // ipb_member_id
+    "exhentaiIpbMemberId": "",
+    // ipb_pass_hash
+    "exhentaiIpbPassHash": "",
+    // igneous
+    "exhentaiIgneous": "",
     // 是否忽略QQ官方机器人 (2854196300 ≤ qq ≤ 2854216399)
     "ignoreOfficialBot": true,
     // Canvas 库选择，可选值 ["auto", "@napi-rs/canvas", "canvas"] 详见 wiki
