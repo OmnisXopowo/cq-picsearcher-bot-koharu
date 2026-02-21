@@ -492,14 +492,9 @@ export async function pushDoujinshi(context) {
         if (result.action === 'added') {
             // 成功自动入库
             const gallery = result.data.gallery;
-            const searchStrategy = result.data.search_strategy || '';
             const rating = gallery.realRating || gallery.rating || 0;
             let msg = `${gallery.rawTitle}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P`;
 
-            if (searchStrategy) {
-                msg += ` [${searchStrategy}]`;
-            }
-            msg += `:`;
 
             // 添加评论内容显示
             if (gallery.comments && gallery.comments.length > 0) {
@@ -530,16 +525,6 @@ export async function pushDoujinshi(context) {
                 }
 
                 msg += `\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`;
-            }
-
-            // 先发送封面图
-            if (gallery.cover && gallery.cover.url) {
-                try {
-                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
-                    await global.replyMsg(context, coverCQ, false, false);
-                } catch (e) {
-                    console.warn('推本 - 封面图下载失败，跳过:', e.message);
-                }
             }
 
             // 发送主消息（无论有无评论都必须发送）
@@ -634,15 +619,6 @@ export async function handleEhentaiSelect(link, context) {
 
             msg += `\n链接：${link}`;
 
-            // 发送封面图
-            if (gallery.cover && gallery.cover.url) {
-                try {
-                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
-                    await global.replyMsg(context, coverCQ, false, false);
-                } catch (e) {
-                    console.warn('收藏 - 封面图下载失败，跳过:', e.message);
-                }
-            }
             global.replyMsg(context, msg, false, true);
         } else {
             // 回退到基础 add 接口
