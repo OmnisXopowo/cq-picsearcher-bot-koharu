@@ -1,3 +1,4 @@
+import { readFileSync } from 'fs';
 import Jimp from 'jimp';
 import { random } from 'lodash-es';
 
@@ -14,6 +15,18 @@ const ROTATE_DOWN = 0b1000;
  */
 export async function imgAntiShieldingFromArrayBuffer(arrayBuffer, mode) {
   const img = await Jimp.read(Buffer.from(arrayBuffer));
+  return await imgAntiShielding(img, mode);
+}
+
+/**
+ * 从本地文件路径读取图片并进行反和谐处理
+ * @param {string} filePath 本地缓存文件的绝对路径
+ * @param {number} mode 反和谐模式位掩码（同 imgAntiShielding 的 mode）
+ * @returns {Promise<string>} base64 字符串（不含 data:...;base64, 前缀）
+ */
+export async function imgAntiShieldingFromFilePath(filePath, mode) {
+  const buffer = readFileSync(filePath);
+  const img = await Jimp.read(buffer);
   return await imgAntiShielding(img, mode);
 }
 
@@ -46,7 +59,11 @@ function randomModifyPixels(img) {
     [0, h - 1],
     [w - 1, h - 1],
   ];
+  const clamp = (v) => Math.max(0, Math.min(255, v));
+  const delta = () => (random(0, 1) ? 1 : -1) * random(1, 2);
   for (const [x, y] of pixels) {
-    img.setPixelColor(Jimp.rgbaToInt(random(255), random(255), random(255), 1), x, y);
+    // 读取原始 RGB 并微调 ±1~2，alpha 固定为 255，确保 JPEG 格式下文件 hash 真正改变
+    const { r, g, b } = Jimp.intToRGBA(img.getPixelColor(x, y));
+    img.setPixelColor(Jimp.rgbaToInt(clamp(r + delta()), clamp(g + delta()), clamp(b + delta()), 255), x, y);
   }
 }

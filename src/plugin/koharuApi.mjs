@@ -7,6 +7,7 @@ import { CooldownManager } from '../utils/CooldownManager.mjs';
 import CQ from '../utils/CQcode.mjs';
 import { getGroupName } from '../utils/groupInfoCache.mjs';
 import { checkImageHWRatio } from '../utils/image.mjs';
+import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
 import logError from '../utils/logError.mjs';
 import { getRawMessage } from '../utils/message.mjs';
 import { getKeyObject, setKeyObject } from '../utils/redisClient.mjs';
@@ -434,19 +435,19 @@ export async function getCommon(context) {
                                 try {
                                     // 使用 Rvhost URL，启用多代理轮询，但禁用URL直发兜底以便在此处进行URL切换重试
                                     const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
-                                    replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false, trace);
+                                    await sendImgWithAntiShieldFallback(imgCQ, illust.large_file_url, illust.id_danbooru, context, false, trace);
                                 } catch (error) {
                                     // 如果使用Rvhost失败，则尝试不使用Rvhost直接请求（使用原始URL）
                                     console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
                                     const imgCQ = await downloadImage(illust.large_file_url, context, { useNetworkProxy: false, allowUrlFallback: true });
-                                    replyDanbooruRatingMsg(illust.id_danbooru, context, imgCQ, false, trace);
+                                    await sendImgWithAntiShieldFallback(imgCQ, illust.large_file_url, illust.id_danbooru, context, false, trace);
                                 }
                             } catch (error) {
                                 console.error('图片下载 - Danbooru 下载失败:', error);
                             }
                         } else {
                             try {
-                                replyDanbooruRatingMsg(illust.id_danbooru, context, await CQ.imgPreDl(illust.large_file_url), false, trace);
+                                await sendImgWithAntiShieldFallback(await CQ.imgPreDl(illust.large_file_url), illust.large_file_url, illust.id_danbooru, context, false, trace);
                             } catch (error) {
                                 console.error('图片下载 - Danbooru 预下载失败:', error);
                             }
@@ -1001,24 +1002,20 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
                                 const Rvhost = global.config.reverseProxy;
                                 const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
                                 const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
-                                texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
+                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
-                                texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
+                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             }
                         } else {
                             try {
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: true, allowUrlFallback: false });
-                                texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
+                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - 所有方式失败，降级为URL直发:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
-                                texts.push(imgCQ);
-                                replyDanbooruRatingMsg(illustObj.id, context, texts.join('\n'), shouldReply);
+                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             }
                         }
                         replyCollectReply(context, result);
@@ -1288,6 +1285,75 @@ function replyPixivRatingMsg(illustId, context, msg, trace = null) {
         .catch(err => {
             console.error('[Pixiv消息] ✗ 发送异常:', err);
         });
+}
+
+/**
+ * 从 CQ 码字符串中提取本地文件路径
+ * @param {string} msg CQ 码字符串
+ * @returns {string|null} 本地文件系统路径，找不到返回 null
+ */
+function extractLocalPathFromCQ(msg) {
+    // 匹配 file:// URI: [CQ:image,file=file:///D:/path/to/file]
+    const fileUriMatch = msg.match(/\[CQ:image,[^\]]*file=file:\/\/\/([^\],]+)/i);
+    if (fileUriMatch) {
+        try { return decodeURIComponent(fileUriMatch[1]).replace(/\//g, '\\'); } catch { return null; }
+    }
+    // 匹配 Windows 绝对路径: [CQ:image,file=D:\path\to\file]
+    const winAbsMatch = msg.match(/\[CQ:image,[^\]]*file=([A-Za-z]:[^\],\s]+)/);
+    if (winAbsMatch) return winAbsMatch[1];
+    return null;
+}
+
+/**
+ * 发送 Danbooru 图片消息，若 retcode 1200 则对图片进行反和谐处理后重发，仍失败则降级 URL 直发
+ * @param {string} msg 完整消息（文字 + 图片 CQ 码）
+ * @param {string} fallbackUrl 图片原始 URL（用于降级直发）
+ * @param {number} illustId Danbooru 插画 ID
+ * @param {object} context 消息上下文
+ * @param {boolean} shouldReply 是否使用回复形式
+ * @param {object|null} [trace] 搜索追踪信息
+ */
+async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context, shouldReply, trace = null) {
+    const record = { id: illustId, type: 'danbooru' };
+    if (trace) record.trace = trace;
+    const saveRecord = (msgRet) => {
+        if (msgRet?.retcode === 0) {
+            global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+            console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
+        }
+    };
+
+    const ret = await global.replyMsg(context, msg, false, shouldReply);
+    if (ret?.retcode === 0) { saveRecord(ret); return; }
+
+    if (ret?.retcode === 1200) {
+        console.warn(`[Danbooru消息] retcode 1200 → 尝试反和谐重发 (illustId: ${illustId})`);
+        const localPath = extractLocalPathFromCQ(msg);
+        if (localPath) {
+            try {
+                // RAND_MOD_PX = 0b1: 随机微调四角像素 RGB ±1~2，改变文件 hash 但不改变视觉内容
+                const base64 = await imgAntiShieldingFromFilePath(localPath, 0b1);
+                const antiMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img64(base64));
+                const ret2 = await global.replyMsg(context, antiMsg, false, shouldReply);
+                if (ret2?.retcode === 0) { saveRecord(ret2); console.log('[Danbooru消息] ✓ 反和谐重发成功'); return; }
+                console.warn('[Danbooru消息] 反和谐重发失败，降级为URL直发');
+            } catch (e) {
+                console.error('[Danbooru消息] 反和谐处理出错:', e);
+            }
+        } else {
+            console.warn('[Danbooru消息] retcode 1200 但消息中无本地文件路径，直接降级URL直发');
+        }
+        // 降级：URL 直发
+        const fallbackMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img(fallbackUrl));
+        const ret3 = await global.replyMsg(context, fallbackMsg, false, shouldReply);
+        if (ret3?.retcode === 0) saveRecord(ret3);
+        else console.error(`[Danbooru消息] URL直发也失败 (retcode: ${ret3?.retcode})`);
+    } else {
+        console.error(`[Danbooru消息] ✗ 发送失败 (retcode: ${ret?.retcode}, status: ${ret?.status})`);
+        console.error(`[Danbooru消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+        console.error(`[Danbooru消息] 错误信息: ${ret?.message}`);
+        console.error('[Danbooru消息] 完整返回:', ret);
+    }
 }
 
 /**
