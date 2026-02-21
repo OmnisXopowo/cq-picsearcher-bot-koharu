@@ -3,7 +3,7 @@
  * 使用 Redis 缓存群信息（群名称等），避免频繁调用 API
  */
 
-import { getKeyObject, setKeyObject } from './redisClient.mjs';
+import { getKeyObject, setKeyObject, buildRedisKey } from './redisClient.mjs';
 
 const CACHE_PREFIX = 'groupInfo';
 const CACHE_EXPIRY = 60 * 60 * 24 * 7; // 7天过期
@@ -11,13 +11,14 @@ const CACHE_EXPIRY = 60 * 60 * 24 * 7; // 7天过期
 /**
  * 获取群信息（带缓存）
  * @param {number} groupId 群号
+ * @param {number|string} [botId] 机器人QQ号（可选，如不提供则不使用bot隔离）
  * @returns {Promise<{group_id: number, group_name: string, member_count: number, max_member_count: number}|null>}
  */
-export async function getGroupInfo(groupId) {
+export async function getGroupInfo(groupId, botId = null) {
     if (!groupId) return null;
 
     // 尝试从缓存获取
-    const cacheKey = `${CACHE_PREFIX}:${groupId}`;
+    const cacheKey = botId ? buildRedisKey(CACHE_PREFIX, botId, groupId) : `${CACHE_PREFIX}:${groupId}`;
     const cached = await getKeyObject(cacheKey, null);
     
     if (cached) {
@@ -47,24 +48,26 @@ export async function getGroupInfo(groupId) {
 /**
  * 获取群名称（带缓存）
  * @param {number} groupId 群号
+ * @param {number|string} [botId] 机器人QQ号（可选，如不提供则不使用bot隔离）
  * @returns {Promise<string|undefined>} 群名称，失败时返回 undefined
  */
-export async function getGroupName(groupId) {
-    const info = await getGroupInfo(groupId);
+export async function getGroupName(groupId, botId = null) {
+    const info = await getGroupInfo(groupId, botId);
     return info?.group_name;
 }
 
 /**
  * 批量获取群信息（带缓存）
  * @param {number[]} groupIds 群号数组
+ * @param {number|string} [botId] 机器人QQ号（可选）
  * @returns {Promise<Map<number, object>>} 群号 -> 群信息的 Map
  */
-export async function batchGetGroupInfo(groupIds) {
+export async function batchGetGroupInfo(groupIds, botId = null) {
     const result = new Map();
     
     await Promise.all(
         groupIds.map(async (groupId) => {
-            const info = await getGroupInfo(groupId);
+            const info = await getGroupInfo(groupId, botId);
             if (info) {
                 result.set(groupId, info);
             }
@@ -77,10 +80,11 @@ export async function batchGetGroupInfo(groupIds) {
 /**
  * 清除指定群的缓存
  * @param {number} groupId 群号
+ * @param {number|string} [botId] 机器人QQ号（可选）
  * @returns {Promise<void>}
  */
-export async function clearGroupInfoCache(groupId) {
-    const cacheKey = `${CACHE_PREFIX}:${groupId}`;
+export async function clearGroupInfoCache(groupId, botId = null) {
+    const cacheKey = botId ? buildRedisKey(CACHE_PREFIX, botId, groupId) : `${CACHE_PREFIX}:${groupId}`;
     try {
         const { redis } = await import('./redisClient.mjs');
         await redis.del(cacheKey);

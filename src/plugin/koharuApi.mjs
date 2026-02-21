@@ -10,7 +10,7 @@ import { checkImageHWRatio } from '../utils/image.mjs';
 import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
 import logError from '../utils/logError.mjs';
 import { getRawMessage } from '../utils/message.mjs';
-import { getKeyObject, setKeyObject } from '../utils/redisClient.mjs';
+import { getKeyObject, setKeyObject, buildRedisKey, buildRedisKeyPattern } from '../utils/redisClient.mjs';
 import voiceManager from '../voicesBank/VoiceManager.mjs';
 import IqDB from './iqdb.mjs';
 import saucenao, { snDB } from './saucenao.mjs';
@@ -43,7 +43,7 @@ function getDisplayName(context) {
  * @returns {Promise<{group: number, user: number, display_name: string|undefined, group_name: string|undefined}>}
  */
 async function getApiContext(context) {
-    const groupName = context.group_id ? await getGroupName(context.group_id) : undefined;
+    const groupName = context.group_id ? await getGroupName(context.group_id, context.self_id) : undefined;
     return {
         group: context.group_id ?? 0,
         user: context.user_id,
@@ -290,7 +290,7 @@ export async function getCommon(context) {
 
     if (query.includes('要闻') && context.group_id && clearAirGruop.includes(context.group_id)) {
 
-        const cooldownKey = `foot_cooldown:${context.group_id}:${context.user_id}`;
+        const cooldownKey = buildRedisKey('foot_cooldown', context.self_id, context.group_id, context.user_id);
         const cooldownHour = 3;
 
         const options = {
@@ -321,7 +321,8 @@ export async function getCommon(context) {
         }
     }
 
-    const isOverLimit = await cooldownManager.SlidingWindowCooldown(`setu:${context.group_id}:${context.user_id}`, 60, 3);
+    const setuCooldownKey = buildRedisKey('setu', context.self_id, context.group_id, context.user_id);
+    const isOverLimit = await cooldownManager.SlidingWindowCooldown(setuCooldownKey, 60, 3);
     if (isOverLimit) {
         global.replyMsg(context, replys.setuLimit, false, true);
         replyLimitedReply(context);
@@ -468,11 +469,18 @@ export async function getCommon(context) {
  */
 export async function pushDoujinshi(context) {
     // 提取关键词（去除命令前缀）
-    const keyword = CQ.unescape(context.message.replace('/推本', '').replace('/tb', '').trim());
+    let rawInput = CQ.unescape(context.message.replace('/推本', '').replace('/tb', '').trim());
+    
+    // 检测 --SFW 或 --sfw 参数
+    const sfwRegex = /\s*--[Ss][Ff][Ww]\s*$/;
+    const shouldSendCover = sfwRegex.test(rawInput);
+    
+    // 从关键词中移除 --SFW 参数
+    const keyword = rawInput.replace(sfwRegex, '').trim();
 
     // 如果没有关键词，提示用户输入
     if (!keyword) {
-        global.replyMsg(context, '请输入要搜索的关键词，例如：/推本+只属于老师的捣蛋鬼', false, true);
+        global.replyMsg(context, '请输入要搜索的关键词，例如：/推本+只属于老师的捣蛋鬼 或 /推本+只属于老师的捣蛋鬼 --sfw（添加--sfw参数可显示封面图）', false, true);
         return true;
     }
 
@@ -492,9 +500,14 @@ export async function pushDoujinshi(context) {
         if (result.action === 'added') {
             // 成功自动入库
             const gallery = result.data.gallery;
+            const searchStrategy = result.data.search_strategy || '';
             const rating = gallery.realRating || gallery.rating || 0;
             let msg = `${gallery.rawTitle}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P`;
 
+            if (searchStrategy) {
+                msg += ` [${searchStrategy}]`;
+            }
+            msg += `:`;
 
             // 添加评论内容显示
             if (gallery.comments && gallery.comments.length > 0) {
@@ -525,6 +538,16 @@ export async function pushDoujinshi(context) {
                 }
 
                 msg += `\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`;
+            }
+
+            // 仅在用户添加 --sfw 参数时才发送封面图
+            if (shouldSendCover && gallery.cover && gallery.cover.url) {
+                try {
+                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                    await global.replyMsg(context, coverCQ, false, false);
+                } catch (e) {
+                    console.warn('推本 - 封面图下载失败，跳过:', e.message);
+                }
             }
 
             // 发送主消息（无论有无评论都必须发送）
@@ -558,10 +581,11 @@ export async function pushDoujinshi(context) {
             const msgRet = await global.replyMsg(context, msg, false, true);
             if (msgRet?.retcode === 0) {
                 // 将结果存储到缓存中供后续选择使用，参考评分功能的键名格式
-                const cacheKey = `tbSelect:${context.group_id}:${msgRet.data.message_id}`;
+                const cacheKey = buildRedisKey('tbSelect', context.self_id, context.group_id, msgRet.data.message_id);
                 await setKeyObject(cacheKey, {
                     galleries,
-                    context
+                    context,
+                    shouldSendCover
                 }, 60 * 60 * 24 * 3); // 3天过期，与评分功能保持一致
             }
         } else {
@@ -582,12 +606,12 @@ export async function pushDoujinshi(context) {
 
 /**
  * 处理用户选择的 ehentai 画廊
- * @param {number} gid 画廊ID
- * @param {string} token 画廊token
+ * @param {string} link 画廊链接
  * @param {object} context 消息上下文
+ * @param {boolean} shouldSendCover 是否发送封面图（默认false）
  * @returns {Promise<boolean>} 是否成功处理
  */
-export async function handleEhentaiSelect(link, context) {
+export async function handleEhentaiSelect(link, context, shouldSendCover = false) {
     try {
         const apiContext = await getApiContext(context);
         // 使用 search-and-add 接口处理 URL（支持直接收录 + 中文优先搜索）
@@ -619,6 +643,15 @@ export async function handleEhentaiSelect(link, context) {
 
             msg += `\n链接：${link}`;
 
+            // 仅在用户添加 --sfw 参数时才发送封面图
+            if (shouldSendCover && gallery.cover && gallery.cover.url) {
+                try {
+                    const coverCQ = await CQ.imgPreDl(gallery.cover.url);
+                    await global.replyMsg(context, coverCQ, false, false);
+                } catch (e) {
+                    console.warn('收藏 - 封面图下载失败，跳过:', e.message);
+                }
+            }
             global.replyMsg(context, msg, false, true);
         } else {
             // 回退到基础 add 接口
@@ -1077,7 +1110,8 @@ function replyEhentaiRatingMsg(url, context, msg) {
     global.replyMsg(context, msg, false, true)
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[EHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[EHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -1095,7 +1129,8 @@ function replyNhentaiRatingMsg(gid, context, msg) {
     global.replyMsg(context, msg, false, true)
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[NHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[NHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -1113,8 +1148,9 @@ export function getSetuUrl(proxy, url) {
     if (!/{{.+}}/.test(proxy)) return new URL(path, proxy).href;
 }
 
-export function checkRatingMsg(msgRet) {
-    return getKeyObject(`RtMsg:${msgRet.group_id}:${msgRet.message_id}`);
+export function checkRatingMsg(msgRet, selfId) {
+    const cacheKey = buildRedisKey('RtMsg', selfId, msgRet.group_id, msgRet.message_id);
+    return getKeyObject(cacheKey);
 }
 
 /**
@@ -1218,10 +1254,11 @@ function formatKeywordTraceLine(kw) {
 /**
  * 检查是否是画廊选择消息
  * @param {object} msgRet 消息对象
+ * @param {number|string} selfId 机器人QQ号
  * @returns {Promise<object|null>} 画廊选择数据或null
  */
-export async function checkGallerySelectMsg(msgRet) {
-    const cacheKey = `tbSelect:${msgRet.group_id}:${msgRet.message_id}`;
+export async function checkGallerySelectMsg(msgRet, selfId) {
+    const cacheKey = buildRedisKey('tbSelect', selfId, msgRet.group_id, msgRet.message_id);
     return await getKeyObject(cacheKey, null);
 }
 
@@ -1239,7 +1276,8 @@ function replyNoResultMsg(context, msg, trace = null) {
     global.replyMsg(context, msg, false, true)
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[无结果消息] ✓ 发送成功，已缓存trace (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[无结果消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -1263,7 +1301,8 @@ function replyPixivRatingMsg(illustId, context, msg, trace = null) {
     global.replyMsg(context, msg, false, false)
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[Pixiv消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[Pixiv消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -1308,7 +1347,8 @@ async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context
     if (trace) record.trace = trace;
     const saveRecord = (msgRet) => {
         if (msgRet?.retcode === 0) {
-            global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+            const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+            global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
             console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
         }
     };
@@ -1360,7 +1400,8 @@ function replyDanbooruRatingMsg(illustId, context, msg, reply = true, trace = nu
     global.replyMsg(context, msg, false, reply)
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
-                global.setKeyObject(`RtMsg:${context.group_id}:${msgRet.data.message_id}`, record, 60 * 60 * 24 * 3);
+                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[Danbooru消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);

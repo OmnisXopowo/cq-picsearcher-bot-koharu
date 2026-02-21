@@ -36,7 +36,7 @@ import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
-import { setKeyValue, getKeyValue, getKeyObject, setKeyObject, getKeys, redis } from './utils/redisClient.mjs';
+import { setKeyValue, getKeyValue, getKeyObject, setKeyObject, getKeys, buildRedisKeyPattern, redis } from './utils/redisClient.mjs';
 import { getRegWithCache } from './utils/regCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 
@@ -199,7 +199,7 @@ async function replyToBotHandle(context, rMsgData) {
   // 去除消息中的CQ码，只保留纯文本内容
   const pureText = context.message.replace(/\[CQ:[^\]]+\]/g, '').trim();
 
-  const illustObj = await checkRatingMsg(rMsgData);
+  const illustObj = await checkRatingMsg(rMsgData, context.self_id);
   if (illustObj) {
     // 处理 /trace 命令 - 查看搜索追踪信息（支持所有类型包括 no_result）
     if (pureText === '/trace' && global.config.bot.KoharuAPI) {
@@ -236,7 +236,7 @@ async function replyToBotHandle(context, rMsgData) {
   } else {
     // 检查是否是画廊选择消息
     const { checkGallerySelectMsg } = await import('./plugin/koharuApi.mjs');
-    const gallerySelectData = await checkGallerySelectMsg(rMsgData);
+    const gallerySelectData = await checkGallerySelectMsg(rMsgData, context.self_id);
     if (gallerySelectData) {
       // 处理画廊选择
       const regex = /^(\d+)$/;
@@ -248,10 +248,11 @@ async function replyToBotHandle(context, rMsgData) {
         // 检查选择是否有效
         if (choice >= 1 && choice <= galleries.length) {
           const selectedGallery = galleries[choice - 1];
+          const shouldSendCover = gallerySelectData.shouldSendCover || false;
           
           // 导入并调用处理函数
           const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
-          await handleEhentaiSelect(selectedGallery.link, context);
+          await handleEhentaiSelect(selectedGallery.link, context, shouldSendCover);
         } else {
           global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
         }
@@ -343,7 +344,8 @@ async function commonHandle(e, context) {
     try {
       // 检查是否是ehentai选择回复，通过最近的推本消息查找
       if (!redis) return false;
-      const recentMsgIds = await getKeys(`tbSelect:${context.group_id}:*`);
+      const keyPattern = buildRedisKeyPattern('tbSelect', context.self_id, context.group_id);
+      const recentMsgIds = await getKeys(keyPattern);
       if (recentMsgIds.length > 0) {
         // 按时间排序，获取最新的消息
         const sortedKeys = recentMsgIds.sort((a, b) => {
@@ -362,10 +364,11 @@ async function commonHandle(e, context) {
           // 检查选择是否有效
           if (choice >= 1 && choice <= galleries.length) {
             const selectedGallery = galleries[choice - 1];
+            const shouldSendCover = cacheData.shouldSendCover || false;
             
             // 导入并调用处理函数
             const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
-            await handleEhentaiSelect(selectedGallery.link,context);
+            await handleEhentaiSelect(selectedGallery.link, context, shouldSendCover);
             
             // 删除已使用的缓存
             // await redis.del(cacheKey);

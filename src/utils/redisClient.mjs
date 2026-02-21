@@ -176,5 +176,36 @@ export async function getKeys(pattern) {
   }
 }
 
+/**
+ * 构建带有bot标识符的Redis键名
+ * @param {string} prefix 键前缀 (如 "RtMsg", "tbSelect", "groupInfo")
+ * @param {number|string} botId 机器人QQ号（self_id）
+ * @param {number|string} groupId 群号（仅针对群相关的键）
+ * @param {number|string} [messageId] 消息ID（可选，仅针对特定消息的键）
+ * @returns {string} 构建好的Redis键名，格式: {prefix}:{botId}:{groupId}:{messageId}（如果有messageId）或 {prefix}:{botId}:{groupId}
+ */
+export function buildRedisKey(prefix, botId, groupId, messageId) {
+  if (messageId !== undefined && messageId !== null) {
+    return `${prefix}:${botId}:${groupId}:${messageId}`;
+  } else {
+    return `${prefix}:${botId}:${groupId}`;
+  }
+}
+
+/**
+ * 构建Redis键搜索模式（带有bot标识符）
+ * @param {string} prefix 键前缀 (如 "RtMsg", "tbSelect", "groupInfo")
+ * @param {number|string} botId 机器人QQ号（self_id）
+ * @param {number|string} [groupId] 群号（可选）
+ * @returns {string} 搜索模式，格式: {prefix}:{botId}:{groupId}:* 或 {prefix}:{botId}:*
+ */
+export function buildRedisKeyPattern(prefix, botId, groupId) {
+  if (groupId !== undefined && groupId !== null) {
+    return `${prefix}:${botId}:${groupId}:*`;
+  } else {
+    return `${prefix}:${botId}:*`;
+  }
+}
+
 // 导出 redis 实例供需要直接操作的情况使用
 export { redis };
