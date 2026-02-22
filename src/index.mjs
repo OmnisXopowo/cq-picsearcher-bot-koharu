@@ -13,7 +13,7 @@ import corpus from './plugin/corpus.mjs';
 import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
-import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, xpDiagnosisReport } from './plugin/koharuApi.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, myXpDiagnosisReport, groupXpDiagnosisReport, getHelpCard } from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
@@ -414,9 +414,12 @@ async function commonHandle(e, context) {
     if (await getCommon(context)) return true;
   }
 
-  // XP 诊断报告
-  if (config.KoharuAPI && context.message.startsWith('/xp诊断报告')) {
-    if (await xpDiagnosisReport(context)) return true;
+  // XP 诊断报告（个人 / 群组）
+  if (config.KoharuAPI && context.message.startsWith('/我的xp诊断报告')) {
+    if (await myXpDiagnosisReport(context)) return true;
+  }
+  if (config.KoharuAPI && context.message.startsWith('/群友xp诊断报告')) {
+    if (await groupXpDiagnosisReport(context)) return true;
   }
 
 
@@ -656,9 +659,13 @@ async function privateAndAtMsg(e, context) {
       logger.smSwitch(0, context.user_id, true);
       logger.smSetDB(0, context.user_id, db);
       replyMsg(context, `已临时切换至【${dbKey}】搜图模式√`, true);
+    } else if (config.KoharuAPI) {
+      await getHelpCard(context);
     } else {
       replyMsg(context, global.config.bot.replys.default, true);
     }
+  } else if (config.KoharuAPI) {
+    await getHelpCard(context);
   } else {
     replyMsg(context, global.config.bot.replys.default, true);
   }

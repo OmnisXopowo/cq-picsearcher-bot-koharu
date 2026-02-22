@@ -1584,19 +1584,11 @@ export class SearchResult {
 }
 
 /**
- * 处理 /xp诊断报告 命令，生成并发送群组统计卡片
- * 默认输出全量统计（period='all'），支持 --7d / --14d / --30d / --90d / --180d / --365d / --weekly / --monthly 周期参数
- * @param {object} context 消息上下文
- * @returns {Promise<boolean>}
+ * 解析 XP 诊断报告周期参数
+ * @param {string} rawParam 原始参数字符串（已去除命令前缀）
+ * @returns {string} 周期值
  */
-export async function xpDiagnosisReport(context) {
-    // 仅在群聊中使用
-    if (!context.group_id) {
-        global.replyMsg(context, '请在群聊中使用此命令', false, true);
-        return true;
-    }
-
-    // 解析周期参数（默认 all）
+function parseXpPeriod(rawParam) {
     const periodMap = [
         ['--365d', '365days'],
         ['--180d', '180days'],
@@ -1609,20 +1601,75 @@ export async function xpDiagnosisReport(context) {
         ['--weekly',  'weekly'],
         ['--week',    'weekly'],
     ];
-    const rawParam = context.message.replace('/xp诊断报告', '').trim().toLowerCase();
-    let period = 'all';
+    const param = rawParam.trim().toLowerCase();
     for (const [flag, val] of periodMap) {
-        if (rawParam.includes(flag)) {
-            period = val;
-            break;
-        }
+        if (param.includes(flag)) return val;
     }
+    return 'all';
+}
 
-    // 群组冷却：每群 1 小时只能触发 1 次
-    const cooldownKey = buildRedisKey('xpCard', context.self_id, context.group_id);
+/**
+ * 处理 /我的xp诊断报告 命令，生成并发送个人统计卡片
+ * @param {object} context 消息上下文
+ * @returns {Promise<boolean>}
+ */
+export async function myXpDiagnosisReport(context) {
+    const rawParam = context.message.replace('/我的xp诊断报告', '');
+    const period = parseXpPeriod(rawParam);
+
+    // 用户冷却：每用户 1 小时 1 次
+    const cooldownKey = buildRedisKey('xpCardUser', context.self_id, context.user_id);
     const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 3600, 1);
     if (isOverLimit) {
-        global.replyMsg(context, '📊 统计卡片生成冷却中，请 1 小时后再试', false, true);
+        global.replyMsg(context, '📊 个人统计卡片冷却中，请 1 小时后再试', false, true);
+        return true;
+    }
+
+    try {
+        const apiContext = await getApiContext(context);
+        const response = await koharuAxios.post('/api/stats/card/image', {
+            scope: 'user',
+            qq_id: context.user_id,
+            display_name: apiContext.display_name,
+            period,
+        }, { responseType: 'arraybuffer' });
+        const imgCQ = CQ.img64(response.data);
+        await global.replyMsg(context, imgCQ, false, false);
+    } catch (error) {
+        const status = error.response?.status;
+        if (status === 503) {
+            global.replyMsg(context, '📊 统计卡片生成服务暂时不可用，请联系管理员', false, true);
+        } else if (status === 404) {
+            global.replyMsg(context, '📊 暂无你的统计数据，快去收藏作品吧', false, true);
+        } else {
+            global.replyMsg(context, '📊 统计卡片生成失败，请稍后重试', false, true);
+            logError('[myXpDiagnosisReport] error');
+            logError(error);
+        }
+    }
+    return true;
+}
+
+/**
+ * 处理 /群友xp诊断报告 命令，生成并发送群组统计卡片
+ * @param {object} context 消息上下文
+ * @returns {Promise<boolean>}
+ */
+export async function groupXpDiagnosisReport(context) {
+    // 仅在群聊中使用
+    if (!context.group_id) {
+        global.replyMsg(context, '请在群聊中使用此命令', false, true);
+        return true;
+    }
+
+    const rawParam = context.message.replace('/群友xp诊断报告', '');
+    const period = parseXpPeriod(rawParam);
+
+    // 群组冷却：每群 1 小时 1 次
+    const cooldownKey = buildRedisKey('xpCardGroup', context.self_id, context.group_id);
+    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 3600, 1);
+    if (isOverLimit) {
+        global.replyMsg(context, '📊 群组统计卡片冷却中，请 1 小时后再试', false, true);
         return true;
     }
 
@@ -1634,7 +1681,6 @@ export async function xpDiagnosisReport(context) {
             groupName: apiContext.group_name,
             period,
         }, { responseType: 'arraybuffer' });
-        // 直接使用二进制 ArrayBuffer 构造 CQ 码
         const imgCQ = CQ.img64(response.data);
         await global.replyMsg(context, imgCQ, false, false);
     } catch (error) {
@@ -1647,9 +1693,40 @@ export async function xpDiagnosisReport(context) {
             global.replyMsg(context, '📊 暂无该群组的统计数据', false, true);
         } else {
             global.replyMsg(context, '📊 统计卡片生成失败，请稍后重试', false, true);
-            logError('[xpDiagnosisReport] error');
+            logError('[groupXpDiagnosisReport] error');
             logError(error);
         }
+    }
+    return true;
+}
+
+/**
+ * 获取帮助说明卡片（Playwright 渲染图片）
+ * 当用户私聊/@ bot 且未命中任何指令时调用
+ * @param {object} context 消息上下文
+ * @returns {Promise<boolean>}
+ */
+export async function getHelpCard(context) {
+    // 用户冷却：每用户 5 分钟 1 次
+    const cooldownKey = buildRedisKey('helpCard', context.self_id, context.user_id);
+    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 300, 1);
+    if (isOverLimit) {
+        // 冷却期间降级为文字回复
+        global.replyMsg(context, global.config.bot.replys.default, true);
+        return true;
+    }
+
+    try {
+        const response = await koharuAxios.get('/api/help-card/commands/image', {
+            responseType: 'arraybuffer',
+        });
+        const imgCQ = CQ.img64(response.data);
+        await global.replyMsg(context, imgCQ, false, false);
+    } catch (error) {
+        // 渲染失败降级为文字回复
+        logError('[getHelpCard] error');
+        logError(error);
+        global.replyMsg(context, global.config.bot.replys.default, true);
     }
     return true;
 }
