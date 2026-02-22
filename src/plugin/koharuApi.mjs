@@ -1714,13 +1714,13 @@ export async function groupXpDiagnosisReport(context) {
  */
 export async function getHelpCard(context) {
     // 用户冷却：每用户 5 分钟 1 次
-    const cooldownKey = buildRedisKey('helpCard', context.self_id, context.user_id);
-    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 300, 1);
-    if (isOverLimit) {
-        // 冷却期间降级为文字回复
-        global.replyMsg(context, global.config.bot.replys.default, true);
-        return true;
-    }
+    // const cooldownKey = buildRedisKey('helpCard', context.self_id, context.user_id);
+    // const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 300, 1);
+    // if (isOverLimit) {
+    //     // 冷却期间降级为文字回复
+    //     global.replyMsg(context, global.config.bot.replys.default, true);
+    //     return true;
+    // }
 
     try {
         const response = await koharuAxios.get('/api/help-card/commands/image', {

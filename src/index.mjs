@@ -415,10 +415,10 @@ async function commonHandle(e, context) {
   }
 
   // XP 诊断报告（个人 / 群组）
-  if (config.KoharuAPI && context.message.startsWith('/我的xp诊断报告')) {
+  if (config.KoharuAPI && context.message.startsWith('/我的xp')) {
     if (await myXpDiagnosisReport(context)) return true;
   }
-  if (config.KoharuAPI && context.message.startsWith('/群友xp诊断报告')) {
+  if (config.KoharuAPI && context.message.startsWith('/群友xp')) {
     if (await groupXpDiagnosisReport(context)) return true;
   }
 
@@ -659,12 +659,12 @@ async function privateAndAtMsg(e, context) {
       logger.smSwitch(0, context.user_id, true);
       logger.smSetDB(0, context.user_id, db);
       replyMsg(context, `已临时切换至【${dbKey}】搜图模式√`, true);
-    } else if (config.KoharuAPI) {
+    } else if (global.config.bot.KoharuAPI) {
       await getHelpCard(context);
     } else {
       replyMsg(context, global.config.bot.replys.default, true);
     }
-  } else if (config.KoharuAPI) {
+  } else if (global.config.bot.KoharuAPI) {
     await getHelpCard(context);
   } else {
     replyMsg(context, global.config.bot.replys.default, true);
