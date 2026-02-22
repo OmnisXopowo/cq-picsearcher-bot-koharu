@@ -1638,7 +1638,10 @@ export async function myXpDiagnosisReport(context) {
     } catch (error) {
         const status = error.response?.status;
         if (status === 503) {
-            global.replyMsg(context, '📊 统计卡片生成服务暂时不可用，请联系管理员', false, true);
+            global.replyMsg(context, '📊 统计卡片生成服务维护中暂时不可用', false, true);
+        } else if (status === 422) {
+            // 样本不足 — 后端返回 INSUFFICIENT_SAMPLES
+            global.replyMsg(context, '📊 你的投稿数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
         } else if (status === 404) {
             global.replyMsg(context, '📊 暂无你的统计数据，快去收藏作品吧', false, true);
         } else {
@@ -1686,7 +1689,10 @@ export async function groupXpDiagnosisReport(context) {
     } catch (error) {
         const status = error.response?.status;
         if (status === 503) {
-            global.replyMsg(context, '📊 统计卡片生成服务暂时不可用，请联系管理员', false, true);
+            global.replyMsg(context, '📊 统计卡片生成服务维护中暂时不可用', false, true);
+        } else if (status === 422) {
+            // 样本不足 — 后端返回 INSUFFICIENT_SAMPLES
+            global.replyMsg(context, '📊 该群组投稿数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
         } else if (status === 403) {
             global.replyMsg(context, '📊 该群组无权查看统计卡片', false, true);
         } else if (status === 404) {
