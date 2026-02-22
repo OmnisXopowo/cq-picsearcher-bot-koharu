@@ -644,26 +644,47 @@ export async function handleEhentaiSelect(link, context, shouldSendCover = false
         if (result.action === 'added') {
             const gallery = result.data.gallery || {};
             const rating = gallery.realRating || gallery.rating || 0;
-            let msg = result.message || '收藏成功';
+            const title = gallery.rawTitle || (result.data && result.data.title) || '';
+            let msg = `${title}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P：`;
 
-            if (gallery.rawTitle) {
-                msg += `\n${gallery.rawTitle}`;
-            } else if (result.data && result.data.title) {
-                msg += `\n${result.data.title}`;
+            // 添加评论内容显示（与 pushDoujinshi 逻辑保持一致）
+            if (gallery.comments && gallery.comments.length > 0) {
+                // 混淆评论中的 http 链接，避免被 QQ 识别为可点击链接
+                const filteredComments = gallery.comments.map(comment =>
+                    comment.replace(/(https?):\/\/([^\s]+)/g, (match, protocol, rest) => {
+                        const emojis = ['🔗', '🌐', '🔍', '💡', '📌'];
+                        const randomEmoji = emojis[Math.floor(Math.random() * emojis.length)];
+                        return `${protocol}://${randomEmoji}${rest}`;
+                    })
+                );
+
+                const commentsToShow = [];
+                let totalLength = 0;
+                const maxLength = 800;
+
+                for (let i = 0; i < Math.min(15, filteredComments.length); i++) {
+                    const comment = filteredComments[i];
+                    const commentLength = comment.length + 3; // +3 for prefix and newline
+
+                    if (totalLength + commentLength <= maxLength) {
+                        commentsToShow.push(comment);
+                        totalLength += commentLength;
+                    } else {
+                        break;
+                    }
+                }
+
+                msg += `\n${commentsToShow.map(comment => `-${comment}`).join('\n')}`;
             }
 
-            if (rating) {
-                msg += `\n评分：${rating}⭐`;
-            }
-
-            if (gallery.pageCount) {
-                msg += `  ${gallery.pageCount}P`;
-            }
-
-            msg += `\n链接：${link}`;
 
             // 先发送主消息
-            global.replyMsg(context, msg, false, true);
+            console.log('收藏 - 结果: 返回消息长度:', msg.length);
+            const ret = await global.replyMsg(context, msg, false, true);
+            if (ret?.retcode === 1200) {
+                console.warn('收藏 - 发送结果: 发送失败，可能被禁言');
+                await global.replyMsg(context, `好书收录📚 ！${rating}⭐ ${gallery.pageCount}P:\n${title}\n链接：${link}`, false, true);
+            }
 
             // 异步发送封面图，不阻塞主消息发送
             if (shouldSendCover && gallery.cover && gallery.cover.url) {
@@ -689,7 +710,6 @@ export async function handleEhentaiSelect(link, context, shouldSendCover = false
             if (addData.title) {
                 msg += `\n${addData.title}`;
             }
-            msg += `\n链接：${link}`;
             global.replyMsg(context, msg, false, true);
         }
         return true;
