@@ -415,10 +415,10 @@ async function commonHandle(e, context) {
   }
 
   // XP 诊断报告（个人 / 群组）
-  if (config.KoharuAPI && context.message.startsWith('/我的xp诊断')) {
+  if (config.KoharuAPI && context.message.startsWith('/我的xp')) {
     if (await myXpDiagnosisReport(context)) return true;
   }
-  if (config.KoharuAPI && context.message.startsWith('/群友xp诊断')) {
+  if (config.KoharuAPI && context.message.startsWith('/群友xp')) {
     if (await groupXpDiagnosisReport(context)) return true;
   }
 
