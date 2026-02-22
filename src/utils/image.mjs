@@ -41,11 +41,9 @@ export const getCqImg64FromUrl = async (url, type = undefined) => {
   try {
     // 自动替换 i.pximg.net 为代理域名
     const targetUrl = replacePximgUrl(url);
-    const base64 = await retryAsync(
-      () => Axios.getBase64(targetUrl),
-      3,
-      e => e.code === 'ECONNRESET',
-    );
+    // ✨ 改进：使用 Axios.download() 而不是 Axios.getBase64()
+    const response = await Axios.download(targetUrl);
+    const base64 = Buffer.from(response.data).toString('base64');
     return CQ.img64(base64, type);
   } catch (e) {
     logError('[error] getCqImg64FromUrl');
@@ -58,12 +56,9 @@ export const getAntiShieldedCqImg64FromUrl = async (url, mode, type = undefined)
   try {
     // 自动替换 i.pximg.net 为代理域名
     const targetUrl = replacePximgUrl(url);
-    const arrayBuffer = await retryAsync(
-      () => Axios.get(targetUrl, { responseType: 'arraybuffer' }).then(r => r.data),
-      3,
-      e => e.code === 'ECONNRESET',
-    );
-    const base64 = await imgAntiShieldingFromArrayBuffer(arrayBuffer, mode);
+    // ✨ 改进：使用 Axios.download() 享受完整的降级链
+    const response = await Axios.download(targetUrl);
+    const base64 = await imgAntiShieldingFromArrayBuffer(response.data, mode);
     return CQ.img64(base64, type);
   } catch (e) {
     logError('[error] getAntiShieldedCqImg64FromUrl');
@@ -84,11 +79,17 @@ export const dlImgToCache = async (url, config = {}, limit = false) => {
   if (cachedPath) return cachedPath;
   // 自动替换 i.pximg.net 为代理域名
   const targetUrl = replacePximgUrl(url);
-  const dlFn = () => retryGet(targetUrl, { responseType: 'arraybuffer', ...config });
-  const { data } = await (limit ? dlImgLimit(dlFn) : dlFn());
-  return createCache(url, Buffer.from(data));
+  // ✨ 改进：使用 Axios.download() 享受完整的降级链（多代理轮询、Puppeteer、FlareSolverr 等）
+  const dlFn = () => Axios.download(targetUrl, { config });
+  const response = await (limit ? dlImgLimit(dlFn) : dlFn());
+  return createCache(url, Buffer.from(response.data));
 };
 
+/**
+ * @param {string} url
+ * @param {import('axios').AxiosRequestConfig} [config] Axios 配置
+ * @param {boolean} [limit] 是否限制并发数
+ */
 /**
  * @param {string} url
  * @param {import('axios').AxiosRequestConfig} [config] Axios 配置
@@ -99,9 +100,10 @@ export const dlImgToCacheBuffer = async (url, config = {}, limit = false) => {
   if (cachedPath) return readFileSync(cachedPath);
   // 自动替换 i.pximg.net 为代理域名
   const targetUrl = replacePximgUrl(url);
-  const dlFn = () => retryGet(targetUrl, { responseType: 'arraybuffer', ...config });
-  const { data } = await (limit ? dlImgLimit(dlFn) : dlFn());
-  const buffer = Buffer.from(data);
+  // ✨ 改进：使用 Axios.download() 享受完整的降级链
+  const dlFn = () => Axios.download(targetUrl, { config });
+  const response = await (limit ? dlImgLimit(dlFn) : dlFn());
+  const buffer = Buffer.from(response.data);
   createCache(url, buffer);
   return buffer;
 };

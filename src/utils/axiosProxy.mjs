@@ -111,20 +111,16 @@ async function requestWithFallback(method, instance, url, data, config) {
 }
 
 /**
- * 专用的下载方法：支持多代理轮询，所有代理失败后降级为直连
- * 对于 Danbooru CDN，支持 Puppeteer 和 FlareSolverr 作为回退方案
- * @param {string} url
- * @param {{useProxy?: boolean, config?: object, usePuppeteer?: boolean, useFlareSolverr?: boolean}} opts
- * @returns {Promise<import('axios').AxiosResponse>}
+ * 为指定 URL 添加必要的请求头和 Cookie
+ * 支持 Danbooru CDN 和 ExHentai 等需要特殊处理的域名
+ * @param {string} url 图片 URL
+ * @param {object} axiosConfig axios 配置对象
  */
-async function download(url, opts = {}) {
-  const { useProxy = true, config = {} } = opts;
-  const axiosConfig = { ...config, responseType: 'arraybuffer' };
-  
-  // 判断是否为 Danbooru CDN
+function setupDownloadHeaders(url, axiosConfig) {
   const isDanbooruCDN = /cdn\.donmai\.us/.test(url);
+  const isExhentai = /^(exhentai\.org|e-hentai\.org|s\.exhentai\.org)/.test(new URL(url).hostname);
   
-  // 为 Danbooru CDN 添加必要的请求头（绕过防盗链）
+  // Danbooru CDN 特殊处理
   if (isDanbooruCDN) {
     axiosConfig.headers = {
       ...axiosConfig.headers,
@@ -133,6 +129,45 @@ async function download(url, opts = {}) {
     };
     console.log('[下载] 检测到 Danbooru CDN，已添加 Referer 请求头');
   }
+  
+  // ExHentai 特殊处理：添加 Cookie
+  if (isExhentai) {
+    const exhentaiIpbMemberId = global.config?.bot?.exhentaiIpbMemberId || '';
+    const exhentaiIpbPassHash = global.config?.bot?.exhentaiIpbPassHash || '';
+    const exhentaiIgneous = global.config?.bot?.exhentaiIgneous || '';
+    
+    if (exhentaiIpbMemberId && exhentaiIpbPassHash) {
+      const cookieStr = 
+        `ipb_member_id=${exhentaiIpbMemberId}; ` +
+        `ipb_pass_hash=${exhentaiIpbPassHash}` +
+        (exhentaiIgneous ? `; igneous=${exhentaiIgneous}` : '');
+      
+      axiosConfig.headers = {
+        ...axiosConfig.headers,
+        'Cookie': cookieStr,
+        'Referer': 'https://exhentai.org/',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+      };
+      console.log('[下载] ExHentai 已添加 Cookie 和 Referer 请求头');
+    }
+  }
+  
+  return { isDanbooruCDN, isExhentai };
+}
+
+/**
+ * 专用的下载方法：支持多代理轮询，所有代理失败后降级为直连
+ * 对于 Danbooru CDN 和 ExHentai，支持 Puppeteer 和 FlareSolverr 作为回退方案
+ * @param {string} url
+ * @param {{useProxy?: boolean, config?: object, usePuppeteer?: boolean, useFlareSolverr?: boolean}} opts
+ * @returns {Promise<import('axios').AxiosResponse>}
+ */
+async function download(url, opts = {}) {
+  const { useProxy = true, config = {} } = opts;
+  const axiosConfig = { ...config, responseType: 'arraybuffer' };
+  
+  // 为 URL 设置必要的请求头
+  const { isDanbooruCDN, isExhentai } = setupDownloadHeaders(url, axiosConfig);
   
   if (!useProxy) {
     // 不使用代理，直接使用共享 client
@@ -171,12 +206,18 @@ async function download(url, opts = {}) {
     errors.push({ proxy: null, error });
   }
   
-  // Layer 3: 对于 Danbooru CDN，尝试 Puppeteer 绕过 Cloudflare
-  if (isDanbooruCDN) {
+  // Layer 3: 对于 Danbooru CDN 和 ExHentai，尝试 Puppeteer
+  if (isDanbooruCDN || isExhentai) {
     try {
-      console.log('[下载] 尝试使用 Puppeteer 绕过 Cloudflare...');
+      console.log('[下载] 尝试使用 Puppeteer 绕过限制...');
       const { puppeteer } = await import('../../libs/puppeteer/index.mjs');
-      const imageBuffer = await puppeteer.downloadImage(url);
+      const imageBuffer = await puppeteer.downloadImage(url, { 
+        cookies: isExhentai ? {
+          ipb_member_id: global.config?.bot?.exhentaiIpbMemberId || '',
+          ipb_pass_hash: global.config?.bot?.exhentaiIpbPassHash || '',
+          igneous: global.config?.bot?.exhentaiIgneous || ''
+        } : undefined
+      });
       console.log(`[下载] ✓ Puppeteer 成功 (${imageBuffer.length} bytes)`);
       return { data: imageBuffer };
     } catch (error) {
@@ -187,9 +228,13 @@ async function download(url, opts = {}) {
     
     // Layer 4: 尝试 FlareSolverr（如果配置了的话）
     const fsConfig = global.config?.flaresolverr;
-    if (fsConfig?.url && fsConfig?.enableForDanbooruCDN) {
+    const shouldTryFlaresolverr = 
+      (isDanbooruCDN && fsConfig?.url && fsConfig?.enableForDanbooruCDN) ||
+      (isExhentai && fsConfig?.url && fsConfig?.enableForDanbooruCDN); // 可复用同一配置
+    
+    if (shouldTryFlaresolverr) {
       try {
-        console.log('[下载] 尝试使用 FlareSolverr 绕过 Cloudflare...');
+        console.log('[下载] 尝试使用 FlareSolverr 绕过限制...');
         const imageBuffer = await downloadWithFlareSolverr(url, fsConfig);
         console.log(`[下载] ✓ FlareSolverr 成功 (${imageBuffer.length} bytes)`);
         return { data: imageBuffer };

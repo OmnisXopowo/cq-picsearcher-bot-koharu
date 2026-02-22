@@ -523,12 +523,7 @@ export async function pushDoujinshi(context) {
             const gallery = result.data.gallery;
             const searchStrategy = result.data.search_strategy || '';
             const rating = gallery.realRating || gallery.rating || 0;
-            let msg = `${gallery.rawTitle}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P`;
-
-            if (searchStrategy) {
-                msg += ` [${searchStrategy}]`;
-            }
-            msg += `:`;
+            let msg = `${gallery.rawTitle}\n好书收录📚 ！${rating}⭐ ${gallery.pageCount}P：`;
 
             // 添加评论内容显示
             if (gallery.comments && gallery.comments.length > 0) {
@@ -1595,11 +1590,19 @@ class DanbooruData {
 /**
  * 统一的图片下载函数（带完整降级链）
  * 
- * 降级链：
- * 1. pximgProxy URL转换（始终生效，不降级）
- * 2. 多代理轮询下载（在 axiosProxy.download 内部实现）
- * 3. 直连下载（在 axiosProxy.download 内部实现）
- * 4. URL直发（CQ.img 兜底）
+ * ExHentai 下载降级链：
+ * ├─ Layer 0: 检查并添加 pximgProxy URL 转换（如适用）
+ * ├─ Layer 1: ExHentai 直连 + Cookie 认证（如已配置）
+ * ├─ Layer 2: 多代理轮询（带 Cookie 自动传递）+ 直连（在 axiosProxy.download 内部）
+ * ├─ Layer 3: Puppeteer 绕过（带 Cookie 支持）
+ * ├─ Layer 4: FlareSolverr 绕过（如配置）
+ * └─ Layer 5: URL 直发兜底（仅当 allowUrlFallback=true）
+ * 
+ * Pixiv/Danbooru 下载降级链：
+ * ├─ Layer 0: pximgProxy URL 转换
+ * ├─ Layer 1: 多代理轮询 + 直连
+ * ├─ Layer 2: Puppeteer/FlareSolverr（如适用）
+ * └─ Layer 3: URL 直发兜底
  * 
  * @param {string} url - 图片URL
  * @param {object} context - 上下文对象
@@ -1617,9 +1620,10 @@ async function downloadImage(url, context, options = {}) {
     let targetUrl = url;
     const host = new URL(url).hostname;
     const isExhentai = /^(exhentai\.org|e-hentai\.org|s\.exhentai\.org)$/.test(host);
-
+    const isPximg = /^i\.pximg\.net$/.test(host);
+    
     // 【Layer 0】pximgProxy URL域名替换 - 始终应用于 i.pximg.net，不降级
-    if (/^https?:\/\/i\.pximg\.net\//.test(url)) {
+    if (isPximg) {
         const proxyUrl = getSetuUrl(proxy, url);
         if (proxyUrl) {
             targetUrl = proxyUrl;
@@ -1627,35 +1631,42 @@ async function downloadImage(url, context, options = {}) {
         }
     }
 
-    // 【Layer 1-2】尝试下载（多代理轮询 + 直连，在 axios.download 内部实现）
+    // 【Layer 1-5】尝试下载（完整降级链）
     try {
         console.log(`[图片下载] 开始下载: ${new URL(targetUrl).hostname}${new URL(targetUrl).pathname.substring(0, 50)}...`);
         
-        // E-Hentai 特殊处理：如果配置了 cookies，优先尝试直连下载
+        // ExHentai 特殊处理：Layer 1 - 如果配置了 cookies，优先尝试直连下载
         if (isExhentai && (exhentaiIpbMemberId && exhentaiIpbPassHash)) {
             try {
-                console.log(`[E-Hentai] 尝试使用 Cookie 认证下载...`);
+                console.log(`[E-Hentai] Layer 1: 尝试 Cookie 认证直连...`);
                 const response = await exhentaiAxios.get(targetUrl, { responseType: 'arraybuffer', timeout: 30000 });
                 const filepath = createCache(url, Buffer.from(response.data));
-                console.log(`[图片下载] ✓ 成功缓存 (${filepath}, 大小: ${response.data.length} bytes)`);
+                console.log(`[图片下载] ✓ ExHentai Cookie 认证成功 (${filepath}, 大小: ${response.data.length} bytes)`);
                 return CQ.img(filepath);
             } catch (error) {
-                console.warn(`[E-Hentai] Cookie 认证下载失败，尝试代理下载: ${error.message}`);
-                // 如果 cookie 下载失败，继续使用代理方式降级
+                const errorMsg = error.message || String(error);
+                console.warn(`[E-Hentai] Layer 1 失败 (${errorMsg})，继续下一层级...`);
+                // 继续降级到 Layer 2
             }
         }
         
+        // Layer 2: 多代理轮询 + 直连（axiosProxy.download 内部自动处理 Cookie）
+        console.log(`[图片下载] Layer 2: 尝试多代理轮询...`);
         const response = await axios.download(targetUrl, { useProxy: useNetworkProxy });
         const filepath = createCache(url, Buffer.from(response.data));
-        console.log(`[图片下载] ✓ 成功缓存 (${filepath}, 大小: ${response.data.length} bytes)`);
+        console.log(`[图片下载] ✓ Layer 2 代理轮询成功 (${filepath}, 大小: ${response.data.length} bytes)`);
         return CQ.img(filepath);
+        
     } catch (error) {
         const errorMsg = error.message || String(error);
-        console.error(`[图片下载] ✗ 下载失败: ${errorMsg}`);
+        console.error(`[图片下载] ✗ Layer 2 全部失败: ${errorMsg}`);
         
-        // 【Layer 3】URL直发兜底
+        // 【Layer 3-4】URL直发兜底 - Puppeteer 和 FlareSolverr 在 axiosProxy.download 内已尝试
+        // 这里仅作为兜底处理，实际的高级降级在 axiosProxy.download 中完成
+        
+        // 【Layer 5】URL直发兜底
         if (allowUrlFallback) {
-            console.warn(`[图片下载] 降级为URL直发: ${targetUrl.substring(0, 80)}...`);
+            console.warn(`[图片下载] Layer 5: 降级为URL直发 (${targetUrl.substring(0, 80)}...)`);
             return CQ.img(targetUrl);
         }
         

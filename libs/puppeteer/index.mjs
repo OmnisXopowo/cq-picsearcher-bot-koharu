@@ -245,10 +245,12 @@ class Puppeteer {
   }
 
   /**
-   * 使用 Puppeteer 下载图片（绕过 Cloudflare）
-   * 拦截网络请求获取图片二进制数据
+   * 使用 Puppeteer 下载图片（绕过 Cloudflare 和防盗链）
+   * 支持为特定域名注入 Cookie
    * @param {string} url 图片 URL
    * @param {object} options 配置选项
+   * @param {object} options.cookies Cookie 对象 { name: value, ... }
+   * @param {number} options.timeout 超时时间（毫秒）
    * @returns {Promise<Buffer>} 图片二进制数据
    */
   async downloadImage(url, options = {}) {
@@ -258,6 +260,35 @@ class Puppeteer {
     try {
       // 设置指纹
       await this.setPageFingerprint(page);
+      
+      // 注入 Cookie（如果提供了）
+      if (options.cookies && typeof options.cookies === 'object') {
+        const urlObj = new URL(url);
+        const cookieList = [];
+        
+        for (const [name, value] of Object.entries(options.cookies)) {
+          if (value) {
+            cookieList.push({
+              name,
+              value: String(value),
+              domain: urlObj.hostname,
+              path: '/',
+              httpOnly: true,
+              expires: Math.floor(Date.now() / 1000) + 86400 * 365, // 1年过期
+              secure: urlObj.protocol === 'https:'
+            });
+          }
+        }
+        
+        if (cookieList.length > 0) {
+          try {
+            await page.setCookie(...cookieList);
+            console.log(`[Puppeteer] 已注入 ${cookieList.length} 个 Cookie`);
+          } catch (e) {
+            console.warn(`[Puppeteer] Cookie 注入失败: ${e.message}`);
+          }
+        }
+      }
       
       console.log(`[Puppeteer] 下载图片: ${url}`);
       
