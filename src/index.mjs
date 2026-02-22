@@ -13,7 +13,7 @@ import corpus from './plugin/corpus.mjs';
 import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
-import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage } from './plugin/koharuApi.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, xpDiagnosisReport } from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
@@ -412,6 +412,11 @@ async function commonHandle(e, context) {
   // 来点
   if (config.KoharuAPI && context.message.startsWith("/来点")) {
     if (await getCommon(context)) return true;
+  }
+
+  // XP 诊断报告
+  if (config.KoharuAPI && context.message.startsWith('/xp诊断报告')) {
+    if (await xpDiagnosisReport(context)) return true;
   }
 
 

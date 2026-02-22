@@ -683,7 +683,7 @@ export async function handleEhentaiSelect(link, context, shouldSendCover = false
             const ret = await global.replyMsg(context, msg, false, true);
             if (ret?.retcode === 1200) {
                 console.warn('收藏 - 发送结果: 发送失败，可能被禁言');
-                await global.replyMsg(context, `好书收录📚 ！${rating}⭐ ${gallery.pageCount}P:\n${title}\n链接：${link}`, false, true);
+                await global.replyMsg(context, `好书收录📚 ！${rating}⭐ ${gallery.pageCount}P:\n${title}\n`, false, true);
             }
 
             // 异步发送封面图，不阻塞主消息发送
@@ -1581,6 +1581,77 @@ export class SearchResult {
         this.sql_records = jsonData.sql_records;
         this.success = jsonData.success;
     }
+}
+
+/**
+ * 处理 /xp诊断报告 命令，生成并发送群组统计卡片
+ * 默认输出全量统计（period='all'），支持 --7d / --14d / --30d / --90d / --180d / --365d / --weekly / --monthly 周期参数
+ * @param {object} context 消息上下文
+ * @returns {Promise<boolean>}
+ */
+export async function xpDiagnosisReport(context) {
+    // 仅在群聊中使用
+    if (!context.group_id) {
+        global.replyMsg(context, '请在群聊中使用此命令', false, true);
+        return true;
+    }
+
+    // 解析周期参数（默认 all）
+    const periodMap = [
+        ['--365d', '365days'],
+        ['--180d', '180days'],
+        ['--90d',  '90days'],
+        ['--30d',  '30days'],
+        ['--14d',  '14days'],
+        ['--7d',   '7days'],
+        ['--monthly', 'monthly'],
+        ['--month',   'monthly'],
+        ['--weekly',  'weekly'],
+        ['--week',    'weekly'],
+    ];
+    const rawParam = context.message.replace('/xp诊断报告', '').trim().toLowerCase();
+    let period = 'all';
+    for (const [flag, val] of periodMap) {
+        if (rawParam.includes(flag)) {
+            period = val;
+            break;
+        }
+    }
+
+    // 群组冷却：每群 1 小时只能触发 1 次
+    const cooldownKey = buildRedisKey('xpCard', context.self_id, context.group_id);
+    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 3600, 1);
+    if (isOverLimit) {
+        global.replyMsg(context, '📊 统计卡片生成冷却中，请 1 小时后再试', false, true);
+        return true;
+    }
+
+    try {
+        const apiContext = await getApiContext(context);
+        const response = await koharuAxios.post('/api/stats/card/image', {
+            scope: 'group',
+            groupId: context.group_id,
+            groupName: apiContext.group_name,
+            period,
+        }, { responseType: 'arraybuffer' });
+        // 直接使用二进制 ArrayBuffer 构造 CQ 码
+        const imgCQ = CQ.img64(response.data);
+        await global.replyMsg(context, imgCQ, false, false);
+    } catch (error) {
+        const status = error.response?.status;
+        if (status === 503) {
+            global.replyMsg(context, '📊 统计卡片生成服务暂时不可用，请联系管理员', false, true);
+        } else if (status === 403) {
+            global.replyMsg(context, '📊 该群组无权查看统计卡片', false, true);
+        } else if (status === 404) {
+            global.replyMsg(context, '📊 暂无该群组的统计数据', false, true);
+        } else {
+            global.replyMsg(context, '📊 统计卡片生成失败，请稍后重试', false, true);
+            logError('[xpDiagnosisReport] error');
+            logError(error);
+        }
+    }
+    return true;
 }
 
 /**
