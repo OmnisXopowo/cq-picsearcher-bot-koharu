@@ -36,7 +36,7 @@ import logger from './utils/logger.mjs';
 import { getRawMessage } from './utils/message.mjs';
 import { resolveByDirname } from './utils/path.mjs';
 import psCache from './utils/psCache.mjs';
-import { setKeyValue, getKeyValue, getKeyObject, setKeyObject, getKeys, buildRedisKeyPattern, redis } from './utils/redisClient.mjs';
+import { setKeyValue, getKeyValue, getKeyObject, setKeyObject, getKeys, buildRedisKey, buildRedisKeyPattern, redis } from './utils/redisClient.mjs';
 import { getRegWithCache } from './utils/regCache.mjs';
 import searchingMap from './utils/searchingMap.mjs';
 
@@ -238,21 +238,31 @@ async function replyToBotHandle(context, rMsgData) {
     const { checkGallerySelectMsg } = await import('./plugin/koharuApi.mjs');
     const gallerySelectData = await checkGallerySelectMsg(rMsgData, context.self_id);
     if (gallerySelectData) {
+      // 只允许发起推本的用户进行选择，防止他人劫持
+      if (String(gallerySelectData.userId) !== String(context.user_id)) {
+        return;
+      }
       // 处理画廊选择
       const regex = /^(\d+)$/;
       const match = pureText.match(regex);
       if (match) {
         const choice = parseInt(match[1], 10);
         const galleries = gallerySelectData.galleries;
-        
+
         // 检查选择是否有效
         if (choice >= 1 && choice <= galleries.length) {
           const selectedGallery = galleries[choice - 1];
           const shouldSendCover = gallerySelectData.shouldSendCover || false;
-          
+
           // 导入并调用处理函数
           const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
           await handleEhentaiSelect(selectedGallery.link, context, shouldSendCover);
+
+          // 删除已使用的缓存，防止重复响应
+          if (redis) {
+            const cacheKey = buildRedisKey('tbSelect', context.self_id, rMsgData.group_id, rMsgData.message_id);
+            await redis.del(cacheKey);
+          }
         } else {
           global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
         }
@@ -328,6 +338,52 @@ async function commonHandle(e, context) {
   // 黑名单检测
   if (logger.checkBan(context)) return true;
 
+  // 处理ehentai选择结果（需先于语言库，防止corpus拦截纯数字消息）
+  if (/^\d+$/.test(context.message) && redis && context.group_id) {
+    try {
+      const keyPattern = buildRedisKeyPattern('tbSelect', context.self_id, context.group_id);
+      const recentMsgIds = await getKeys(keyPattern);
+      if (recentMsgIds.length > 0) {
+        // 按时间排序，获取最新的消息
+        const sortedKeys = recentMsgIds.sort((a, b) => {
+          const aId = parseInt(a.split(':').pop());
+          const bId = parseInt(b.split(':').pop());
+          return bId - aId;
+        });
+
+        // 获取最新的一条推本选择消息
+        const cacheKey = sortedKeys[0];
+        const cacheData = await getKeyObject(cacheKey);
+        if (cacheData) {
+          // 只允许发起推本的用户进行选择，防止他人劫持
+          if (!cacheData.userId || String(cacheData.userId) === String(context.user_id)) {
+            const choice = parseInt(context.message, 10);
+            const galleries = cacheData.galleries;
+
+            // 检查选择是否有效
+            if (choice >= 1 && choice <= galleries.length) {
+              const selectedGallery = galleries[choice - 1];
+              const shouldSendCover = cacheData.shouldSendCover || false;
+
+              // 导入并调用处理函数
+              const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
+              await handleEhentaiSelect(selectedGallery.link, context, shouldSendCover);
+
+              // 删除已使用的缓存，防止后续消息被持续误响应
+              await redis.del(cacheKey);
+              return true;
+            } else {
+              global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
+              return true;
+            }
+          }
+        }
+      }
+    } catch (error) {
+      console.error('处理ehentai选择时出错:', error);
+    }
+  }
+
   // 语言库
   if (corpus(context)) return true;
 
@@ -338,51 +394,6 @@ async function commonHandle(e, context) {
 
   // 忽略指定正则的发言
   if (config.regs.ignore && getRegWithCache(config.regs, 'ignore').test(context.message)) return true;
-
-  // 处理ehentai选择结果
-  if (/^\d+$/.test(context.message)) {
-    try {
-      // 检查是否是ehentai选择回复，通过最近的推本消息查找
-      if (!redis) return false;
-      const keyPattern = buildRedisKeyPattern('tbSelect', context.self_id, context.group_id);
-      const recentMsgIds = await getKeys(keyPattern);
-      if (recentMsgIds.length > 0) {
-        // 按时间排序，获取最新的消息
-        const sortedKeys = recentMsgIds.sort((a, b) => {
-          const aId = parseInt(a.split(':').pop());
-          const bId = parseInt(b.split(':').pop());
-          return bId - aId;
-        });
-        
-        // 获取最新的一条推本选择消息
-        const cacheKey = sortedKeys[0];
-        const cacheData = await getKeyObject(cacheKey);
-        if (cacheData) {
-          const choice = parseInt(context.message, 10);
-          const galleries = cacheData.galleries;
-          
-          // 检查选择是否有效
-          if (choice >= 1 && choice <= galleries.length) {
-            const selectedGallery = galleries[choice - 1];
-            const shouldSendCover = cacheData.shouldSendCover || false;
-            
-            // 导入并调用处理函数
-            const { handleEhentaiSelect } = await import('./plugin/koharuApi.mjs');
-            await handleEhentaiSelect(selectedGallery.link, context, shouldSendCover);
-            
-            // 删除已使用的缓存
-            // await redis.del(cacheKey);
-            return true;
-          } else {
-            global.replyMsg(context, `选择无效，请输入 1-${galleries.length} 之间的数字`, false, true);
-            return true;
-          }
-        }
-      }
-    } catch (error) {
-      console.error('处理ehentai选择时出错:', error);
-    }
-  }
 
   // 通用指令
   if (context.message === '--help') {
@@ -584,7 +595,7 @@ async function privateAndAtMsg(e, context) {
         if (data) {
           // 如果回复的是机器人的消息则忽略
           if (data.sender.user_id === context.self_id) {
-            replyToBotHandle(context, data);
+            await replyToBotHandle(context, data);
             e.stopPropagation();
             return;
           }
@@ -618,7 +629,7 @@ async function privateAndAtMsg(e, context) {
         if (data) {
           // 如果回复的是机器人的消息则忽略
           if (data.sender.user_id === context.self_id) {
-            replyToBotHandle(context, data);
+            await replyToBotHandle(context, data);
             e.stopPropagation();
             return;
           }

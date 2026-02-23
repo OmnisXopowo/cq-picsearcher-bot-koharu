@@ -5,6 +5,7 @@ import axios from '../utils/axiosProxy.mjs';
 import { createCache } from '../utils/cache.mjs';
 import { CooldownManager } from '../utils/CooldownManager.mjs';
 import CQ from '../utils/CQcode.mjs';
+import dailyCountInstance from '../utils/dailyCount.mjs';
 import { getGroupName } from '../utils/groupInfoCache.mjs';
 import { checkImageHWRatio } from '../utils/image.mjs';
 import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
@@ -603,6 +604,7 @@ export async function pushDoujinshi(context) {
                 const cacheKey = buildRedisKey('tbSelect', context.self_id, context.group_id, msgRet.data.message_id);
                 await setKeyObject(cacheKey, {
                     galleries,
+                    userId: context.user_id,
                     context,
                     shouldSendCover
                 }, 60 * 60 * 24 * 3); // 3天过期，与评分功能保持一致
@@ -1609,21 +1611,22 @@ function parseXpPeriod(rawParam) {
 }
 
 /**
- * 处理 /我的xp诊断报告 命令，生成并发送个人统计卡片
+ * 处理 /我的xp 命令，生成并发送个人统计卡片
  * @param {object} context 消息上下文
  * @returns {Promise<boolean>}
  */
 export async function myXpDiagnosisReport(context) {
-    const rawParam = context.message.replace('/我的xp诊断报告', '');
+    const rawParam = context.message.replace('/我的xp', '');
     const period = parseXpPeriod(rawParam);
 
-    // 用户冷却：每用户 1 小时 1 次
-    const cooldownKey = buildRedisKey('xpCardUser', context.self_id, context.user_id);
-    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 3600, 1);
-    if (isOverLimit) {
-        global.replyMsg(context, '📊 个人统计卡片冷却中，请 1 小时后再试', false, true);
+    // 用户冷却：每天 1 次，零点重置（参考占卜功能）
+    const limitKey = buildRedisKey('xpCardUser', context.self_id, context.user_id);
+    const currentCount = dailyCountInstance.get(limitKey) || 0;
+    if (currentCount >= 1) {
+        global.replyMsg(context, '📊 个人统计卡片每天只能生成一次，请明天再试', false, true);
         return true;
     }
+    dailyCountInstance.add(limitKey);
 
     try {
         const apiContext = await getApiContext(context);
@@ -1641,7 +1644,11 @@ export async function myXpDiagnosisReport(context) {
             global.replyMsg(context, '📊 统计卡片生成服务维护中暂时不可用', false, true);
         } else if (status === 422) {
             // 样本不足 — 后端返回 INSUFFICIENT_SAMPLES
-            global.replyMsg(context, '📊 你的投稿数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
+            if (period === 'all') {
+                global.replyMsg(context, '📊 你的收藏数据还太少了，请多多收藏一些作品吧~', false, true);
+            } else {
+                global.replyMsg(context, '📊 你的收藏数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
+            }
         } else if (status === 404) {
             global.replyMsg(context, '📊 暂无你的统计数据，快去收藏作品吧', false, true);
         } else {
@@ -1654,7 +1661,7 @@ export async function myXpDiagnosisReport(context) {
 }
 
 /**
- * 处理 /群友xp诊断报告 命令，生成并发送群组统计卡片
+ * 处理 /群友xp 命令，生成并发送群组统计卡片
  * @param {object} context 消息上下文
  * @returns {Promise<boolean>}
  */
@@ -1665,16 +1672,17 @@ export async function groupXpDiagnosisReport(context) {
         return true;
     }
 
-    const rawParam = context.message.replace('/群友xp诊断报告', '');
+    const rawParam = context.message.replace('/群友xp', '');
     const period = parseXpPeriod(rawParam);
 
-    // 群组冷却：每群 1 小时 1 次
-    const cooldownKey = buildRedisKey('xpCardGroup', context.self_id, context.group_id);
-    const isOverLimit = await cooldownManager.SlidingWindowCooldown(cooldownKey, 3600, 1);
-    if (isOverLimit) {
-        global.replyMsg(context, '📊 群组统计卡片冷却中，请 1 小时后再试', false, true);
+    // 群组冷却：每天 1 次，零点重置
+    const limitKey = buildRedisKey('xpCardGroup', context.self_id, context.group_id);
+    const currentCount = dailyCountInstance.get(limitKey) || 0;
+    if (currentCount >= 1) {
+        global.replyMsg(context, '📊 群组统计卡片每天只能生成一次，请明天再试', false, true);
         return true;
     }
+    dailyCountInstance.add(limitKey);
 
     try {
         const apiContext = await getApiContext(context);
@@ -1692,7 +1700,11 @@ export async function groupXpDiagnosisReport(context) {
             global.replyMsg(context, '📊 统计卡片生成服务维护中暂时不可用', false, true);
         } else if (status === 422) {
             // 样本不足 — 后端返回 INSUFFICIENT_SAMPLES
-            global.replyMsg(context, '📊 该群组投稿数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
+            if (period === 'all') {
+                global.replyMsg(context, '📊 该群组收藏数据还太少了，请多多收藏一些作品吧~', false, true);
+            } else {
+                global.replyMsg(context, '📊 该群组收藏数据还太少了，请尝试选择更长的统计周期或多收藏一些作品吧~', false, true);
+            }
         } else if (status === 403) {
             global.replyMsg(context, '📊 该群组无权查看统计卡片', false, true);
         } else if (status === 404) {
