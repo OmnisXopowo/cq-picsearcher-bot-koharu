@@ -38,7 +38,7 @@ const exhentaiAxios = Axios.create({
 
 // 如果配置了 E-Hentai cookies，则添加到请求头
 if (exhentaiIpbMemberId && exhentaiIpbPassHash) {
-    exhentaiAxios.defaults.headers.common['Cookie'] = 
+    exhentaiAxios.defaults.headers.common.Cookie = 
         `ipb_member_id=${exhentaiIpbMemberId}; ` +
         `ipb_pass_hash=${exhentaiIpbPassHash}` +
         (exhentaiIgneous ? `; igneous=${exhentaiIgneous}` : '');
@@ -491,7 +491,7 @@ export async function getCommon(context) {
  */
 export async function pushDoujinshi(context) {
     // 提取关键词（去除命令前缀）
-    let rawInput = CQ.unescape(context.message.replace('/推本', '').replace('/tb', '').trim());
+    const rawInput = CQ.unescape(context.message.replace('/推本', '').replace('/tb', '').trim());
     
     // 检测 --SFW 或 --sfw 参数
     const sfwRegex = /\s*--[Ss][Ff][Ww]\s*$/;
@@ -1857,6 +1857,98 @@ async function downloadImage(url, context, options = {}) {
         }
         
         throw error;
+    }
+}
+
+/**
+ * 咪咪缩小术 — /咪咪缩小术
+ * 必须回复一条包含单张图片的消息使用。
+ * @param {object} context 消息上下文
+ * @returns {Promise<boolean>}
+ */
+export async function breastReduction(context) {
+    try {
+        // 清理 reply CQ 码后检查命令前缀
+        const cleanMsg = context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').trim();
+        if (!cleanMsg.startsWith('/咪咪缩小术')) return false;
+
+        // 必须有 reply（回复消息）
+        const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
+        if (!rMsgId) {
+            global.replyMsg(context, '请回复一条包含图片的消息来使用咪咪缩小术～', false, true);
+            return true;
+        }
+
+        // 获取原消息
+        const { data } = await global.bot('get_msg', { message_id: Number(rMsgId) });
+        if (!data) {
+            global.replyMsg(context, '获取不到原消息，请用较新的消息重试', false, true);
+            return true;
+        }
+
+        // 提取图片
+        const imgs = getImgs(getRawMessage(data));
+        if (imgs.length === 0) {
+            global.replyMsg(context, '回复的消息中没有图片哦，请回复一条有图片的消息', false, true);
+            return true;
+        }
+        if (imgs.length > 1) {
+            global.replyMsg(context, '只支持单张图片的咪咪缩小术，请回复只有一张图片的消息', false, true);
+            return true;
+        }
+
+        const imageUrl = imgs[0].url;
+        if (!imageUrl) {
+            global.replyMsg(context, '无法获取图片链接', false, true);
+            return true;
+        }
+
+        global.replyMsg(context, '小春正在检查中…请稍候', false, true);
+
+        const apiCtx = await getApiContext(context);
+        const skipDetection = global.config.bot.breastReductionSkipDetection ?? true;
+        const skipComment = global.config.bot.breastReductionSkipComment ?? true;
+        const { data: result } = await koharuAxios.post('/api/ai-image/process', {
+            plugin_id: 'breast_reduction',
+            image_url: imageUrl,
+            qq_id: apiCtx.user,
+            group_id: apiCtx.group || undefined,
+            skip_detection: skipDetection,
+            skip_result_comment: skipComment,
+        });
+
+        // 构建回复消息
+        const parts = [];
+
+        // 检测吐槽
+        if (result.detection_comment) {
+            parts.push(`🎀 ${result.detection_comment}`);
+        }
+
+        if (result.success && result.result_image_url) {
+            // 发送缩小后的图片
+            if (result.result_comment) {
+                parts.push(`\n${result.result_comment}`);
+            }
+            const imgCQ = CQ.imgPreDl(result.result_image_url);
+            parts.push(imgCQ);
+            if (result.remaining_today !== undefined) {
+                parts.push(`\n（本周剩余 ${result.remaining_today} 次）`);
+            }
+        } else {
+            // 失败情况
+            if (result.user_message) {
+                parts.push(`\n${result.user_message}`);
+            }
+        }
+
+        const replyText = parts.join('');
+        global.replyMsg(context, replyText, false, true);
+        return true;
+
+    } catch (error) {
+        handleApiError(error, context, '咪咪缩小术');
+        return true;
     }
 }
 

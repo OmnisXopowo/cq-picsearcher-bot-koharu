@@ -25,6 +25,10 @@
     "koharuApiBaseUrl": "http://127.0.0.1:5000",
     // Koharu API Token（用于认证，留空则不添加认证头）
     "koharuApiToken": "",
+    // 咪咪缩小术：跳过 AI 视觉检测阶段（节省一次 API 调用，直接执行编辑）
+    "breastReductionSkipDetection": true,
+    // 咪咪缩小术：跳过小春的结果吐槽评语（消息中只有图片结果）
+    "breastReductionSkipComment": true,
     // 管理者QQ，请务必设置
     "admin": 0,
     // 管理者频道 tinyId

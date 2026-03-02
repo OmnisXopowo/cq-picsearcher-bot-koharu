@@ -13,7 +13,7 @@ import corpus from './plugin/corpus.mjs';
 import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
-import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, myXpDiagnosisReport, groupXpDiagnosisReport, getHelpCard } from './plugin/koharuApi.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, myXpDiagnosisReport, groupXpDiagnosisReport, getHelpCard, breastReduction } from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
@@ -431,6 +431,11 @@ async function commonHandle(e, context) {
   }
   if (config.KoharuAPI && context.message.startsWith('/群友xp')) {
     if (await groupXpDiagnosisReport(context)) return true;
+  }
+
+  // 咪咪缩小术（必须回复图片消息使用）
+  if (config.KoharuAPI && context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').trim().startsWith('/咪咪缩小术')) {
+    if (await breastReduction(context)) return true;
   }
 
 

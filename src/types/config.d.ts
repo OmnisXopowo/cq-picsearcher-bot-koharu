@@ -34,6 +34,8 @@ declare interface Bot {
     KoharuAPI: boolean;
     admin: number;
     adminTinyId: string;
+    breastReductionSkipDetection: boolean;
+    breastReductionSkipComment: boolean;
     whiteGroup: Set<number | string>;
     enablePM: boolean;
     enableGM: boolean;
