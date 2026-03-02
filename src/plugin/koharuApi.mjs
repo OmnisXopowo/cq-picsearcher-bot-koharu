@@ -1930,17 +1930,19 @@ export async function breastReduction(context) {
             parts.push(`🎀 ${result.detection_comment}`);
         }
 
-        if (result.success && result.result_image_url) {
+        if (result.success && (result.result_image_base64 || result.result_image_url)) {
             // 发送缩小后的图片
             if (result.result_comment) {
                 parts.push(`\n${result.result_comment}`);
             }
-            // CQ.imgPreDl 是 async，必须 await
-            const imgCQ = await CQ.imgPreDl(result.result_image_url);
-            parts.push(imgCQ);
-            if (result.remaining_today !== undefined) {
-                parts.push(`\n（本周剩余 ${result.remaining_today} 次）`);
+            // 优先使用 base64 直发（最可靠，无需再下载），其次用 URL 预下载
+            let imgCQ;
+            if (result.result_image_base64) {
+                imgCQ = CQ.img64(result.result_image_base64);
+            } else {
+                imgCQ = await CQ.imgPreDl(result.result_image_url);
             }
+            parts.push(imgCQ);
         } else {
             // 失败情况
             if (result.user_message) {
