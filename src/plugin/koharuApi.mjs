@@ -1862,7 +1862,9 @@ async function downloadImage(url, context, options = {}) {
 
 /**
  * 咪咪缩小术 — /咪咪缩小术
- * 必须回复一条包含单张图片的消息使用。
+ * 支持两种触发方式：
+ *   1. 回复一条包含图片的消息并发送 /咪咪缩小术
+ *   2. 直接发送 /咪咪缩小术 并附带一张图片
  * @param {object} context 消息上下文
  * @returns {Promise<boolean>}
  */
@@ -1872,34 +1874,37 @@ export async function breastReduction(context) {
         const cleanMsg = context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').trim();
         if (!cleanMsg.startsWith('/咪咪缩小术')) return false;
 
-        // 必须有 reply（回复消息）
+        let imageUrl = null;
+
+        // 方式 1: 回复消息中的图片
         const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
-        if (!rMsgId) {
-            global.replyMsg(context, '请回复一条包含图片的消息来使用咪咪缩小术～', false, true);
-            return true;
+        if (rMsgId) {
+            const { data } = await global.bot('get_msg', { message_id: Number(rMsgId) });
+            if (data) {
+                const imgs = getImgs(getRawMessage(data));
+                if (imgs.length === 1) {
+                    imageUrl = imgs[0].url;
+                } else if (imgs.length > 1) {
+                    global.replyMsg(context, '只支持单张图片的咪咪缩小术，请回复只有一张图片的消息', false, true);
+                    return true;
+                }
+            }
         }
 
-        // 获取原消息
-        const { data } = await global.bot('get_msg', { message_id: Number(rMsgId) });
-        if (!data) {
-            global.replyMsg(context, '获取不到原消息，请用较新的消息重试', false, true);
-            return true;
-        }
-
-        // 提取图片
-        const imgs = getImgs(getRawMessage(data));
-        if (imgs.length === 0) {
-            global.replyMsg(context, '回复的消息中没有图片哦，请回复一条有图片的消息', false, true);
-            return true;
-        }
-        if (imgs.length > 1) {
-            global.replyMsg(context, '只支持单张图片的咪咪缩小术，请回复只有一张图片的消息', false, true);
-            return true;
-        }
-
-        const imageUrl = imgs[0].url;
+        // 方式 2: 当前消息中直接附带的图片
         if (!imageUrl) {
-            global.replyMsg(context, '无法获取图片链接', false, true);
+            const inlineImgs = getImgs(context.message);
+            if (inlineImgs.length === 1) {
+                imageUrl = inlineImgs[0].url;
+            } else if (inlineImgs.length > 1) {
+                global.replyMsg(context, '只支持单张图片的咪咪缩小术哦～', false, true);
+                return true;
+            }
+        }
+
+        // 两种方式都未获取到图片
+        if (!imageUrl) {
+            global.replyMsg(context, '请回复一条包含图片的消息，或直接发送 /咪咪缩小术 并附带一张图片～', false, true);
             return true;
         }
 
@@ -1930,7 +1935,8 @@ export async function breastReduction(context) {
             if (result.result_comment) {
                 parts.push(`\n${result.result_comment}`);
             }
-            const imgCQ = CQ.imgPreDl(result.result_image_url);
+            // CQ.imgPreDl 是 async，必须 await
+            const imgCQ = await CQ.imgPreDl(result.result_image_url);
             parts.push(imgCQ);
             if (result.remaining_today !== undefined) {
                 parts.push(`\n（本周剩余 ${result.remaining_today} 次）`);
