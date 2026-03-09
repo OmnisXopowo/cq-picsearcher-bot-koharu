@@ -581,13 +581,28 @@ export async function pushDoujinshi(context) {
             }
 
 
+        } else if (result.action === 'error') {
+            // 后端返回结构化错误（ip_banned / sad_panda / quota_exceeded 等）
+            const userMessage = result.user_message || result.message || '搜索失败，请稍后重试';
+            global.replyMsg(context, userMessage, false, true);
+            return true;
+
         } else if (result.action === 'select') {
             // 需要用户选择（所有回退策略均无唯一结果）
             const galleries = result.data.galleries;
             if (!galleries || galleries.length === 0) {
                 const strategy = result.search_strategy || result.data?.search_strategy || '';
-                const hint = strategy ? `（已尝试: ${strategy}）` : '';
-                global.replyMsg(context, `没有找到相关结果，请尝试其他关键词${hint}`, false, true);
+                const hints = result.hints || result.data?.hints || [];
+                let msg = '没有找到相关结果';
+                if (strategy) {
+                    msg += `（已尝试: ${strategy}）`;
+                }
+                if (hints.length > 0) {
+                    msg += '\n💡 ' + hints.join('\n💡 ');
+                } else {
+                    msg += '，请尝试其他关键词';
+                }
+                global.replyMsg(context, msg, false, true);
                 return true;
             }
 
@@ -615,8 +630,14 @@ export async function pushDoujinshi(context) {
         }
     } catch (error) {
         console.error('推本 - 功能出错:', error);
-        if (error.response && error.response.data && error.response.data.message) {
-            global.replyMsg(context, `推本失败: ${error.response.data.message}`, false, true);
+        if (error.response && error.response.data) {
+            // 优先使用 user_message（后端已本地化的友好消息）
+            const userMsg = error.response.data.user_message || error.response.data.message;
+            if (userMsg) {
+                global.replyMsg(context, `推本失败: ${userMsg}`, false, true);
+            } else {
+                global.replyMsg(context, '推本功能暂时不可用，请稍后再试', false, true);
+            }
         } else {
             global.replyMsg(context, '推本功能暂时不可用，请稍后再试', false, true);
         }
@@ -717,8 +738,13 @@ export async function handleEhentaiSelect(link, context, shouldSendCover = false
         return true;
     } catch (error) {
         console.error('收藏 - EhentaiSelect 添加画廊失败:', error);
-        if (error.response && error.response.data && error.response.data.message) {
-            global.replyMsg(context, `添加失败: ${error.response.data.message}`, false, true);
+        if (error.response && error.response.data) {
+            const userMsg = error.response.data.user_message || error.response.data.message;
+            if (userMsg) {
+                global.replyMsg(context, `添加失败: ${userMsg}`, false, true);
+            } else {
+                global.replyMsg(context, '添加画廊功能暂时不可用，请稍后再试', false, true);
+            }
         } else {
             global.replyMsg(context, '添加画廊功能暂时不可用，请稍后再试', false, true);
         }
@@ -1870,8 +1896,9 @@ async function downloadImage(url, context, options = {}) {
  */
 export async function breastReduction(context) {
     try {
-        // 清理 reply CQ 码后检查命令前缀
-        const cleanMsg = context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').trim();
+        // 清理 reply CQ 码和 at CQ 码后检查命令前缀
+        // 回复消息时 QQ 会自动附带 [CQ:at,qq=...] 标签，必须一并去除
+        const cleanMsg = context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').replace(/^\s*\[CQ:at[^\]]*\]\s*/, '').trim();
         if (!cleanMsg.startsWith('/咪咪缩小术')) return false;
 
         let imageUrl = null;
@@ -1908,32 +1935,51 @@ export async function breastReduction(context) {
             return true;
         }
 
-        global.replyMsg(context, '小春正在检查中…请稍候', false, true);
-
         const apiCtx = await getApiContext(context);
-        const skipDetection = global.config.bot.breastReductionSkipDetection ?? true;
-        const skipComment = global.config.bot.breastReductionSkipComment ?? true;
+
+        // ── 固定两步流程：先检测出吐槽，再编辑 ──
+
+        // Step 1: 调用独立检测 API（视觉模型分析图片内容）
+        let detectResult;
+        try {
+            const { data } = await koharuAxios.post('/api/ai-image/detect', {
+                plugin_id: 'breast_reduction',
+                image_url: imageUrl,
+                qq_id: apiCtx.user,
+                group_id: apiCtx.group || undefined,
+            });
+            detectResult = data;
+        } catch (error) {
+            handleApiError(error, context, '咪咪缩小术');
+            return true;
+        }
+
+        // 发送小春的检测吐槽（无论是否可以缩小都发，这是核心体验）
+        if (detectResult.detection_comment) {
+            global.replyMsg(context, `🎀 ${detectResult.detection_comment}`, false, true);
+        }
+
+        // 如果不能缩小，到此结束
+        if (!detectResult.can_proceed) {
+            return true;
+        }
+
+        // Step 2: 执行编辑（跳过检测，因为已在 Step 1 完成）
         const { data: result } = await koharuAxios.post('/api/ai-image/process', {
             plugin_id: 'breast_reduction',
             image_url: imageUrl,
             qq_id: apiCtx.user,
             group_id: apiCtx.group || undefined,
-            skip_detection: skipDetection,
-            skip_result_comment: skipComment,
+            skip_detection: true,
         });
 
         // 构建回复消息
         const parts = [];
 
-        // 检测吐槽
-        if (result.detection_comment) {
-            parts.push(`🎀 ${result.detection_comment}`);
-        }
-
         if (result.success && (result.result_image_base64 || result.result_image_url)) {
-            // 发送缩小后的图片
+            // 发送结果吐槽 + 缩小后的图片
             if (result.result_comment) {
-                parts.push(`\n${result.result_comment}`);
+                parts.push(result.result_comment);
             }
             // 优先使用 base64 直发（最可靠，无需再下载），其次用 URL 预下载
             let imgCQ;
@@ -1945,9 +1991,7 @@ export async function breastReduction(context) {
             parts.push(imgCQ);
         } else {
             // 失败情况
-            if (result.user_message) {
-                parts.push(`\n${result.user_message}`);
-            }
+            parts.push(result.user_message || '编辑失败了…请稍后再试');
         }
 
         const replyText = parts.join('');
@@ -1976,5 +2020,8 @@ function handleApiError(error, context, action = "操作") {
     }
     else if (error.response && error.response.status === 400) {
         global.replyMsg(context, `书库暂时维护中`, false, true);
+    }
+    else {
+        global.replyMsg(context, `${action}失败，请稍后重试`, false, true);
     }
 }

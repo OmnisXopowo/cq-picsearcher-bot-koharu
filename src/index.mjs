@@ -434,7 +434,7 @@ async function commonHandle(e, context) {
   }
 
   // 咪咪缩小术（必须回复图片消息使用）
-  if (config.KoharuAPI && context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').trim().startsWith('/咪咪缩小术')) {
+  if (config.KoharuAPI && context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, '').replace(/^\s*\[CQ:at[^\]]*\]\s*/, '').trim().startsWith('/咪咪缩小术')) {
     if (await breastReduction(context)) return true;
   }
 
