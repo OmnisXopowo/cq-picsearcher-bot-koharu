@@ -319,9 +319,9 @@ function getFightingLevel(favor, against) {
 function getVerdictType(session, total, favor, against, reason, config) {
   const isRetrial = session.isRetrial;
   
-  // 快速通过
-  if (!isRetrial && total >= config.quickPassCount && favor > against && reason.includes('阈值')) {
-    return '快速通过';
+  // 快速通过（赞成多数）或快速释放（反对多数）
+  if (!isRetrial && total >= config.quickPassCount && favor !== against && reason.includes('阈值')) {
+    return favor > against ? '快速通过' : '快速释放';
   }
   
   // 管理员宣判
@@ -1211,9 +1211,13 @@ async function handleVote(context, choice) {
   
   const { favor, against, total } = countVotes(session);
   
-  // 检查是否达到快速通过条件（复审不适用）
-  if (!session.isRetrial && total >= config.quickPassCount && favor > against) {
-    log(`群 ${group_id} 达到快速决议条件: ${total}>=${config.quickPassCount} 且 赞成${favor}>反对${against}`);
+  // 检查是否达到快速决议条件（复审不适用）
+  // 条件：票数达到阈值，且赞成 > 反对（有罪快速通过）或 反对 > 赞成（无罪快速释放，胜负已分）
+  const quickPassReached = !session.isRetrial && total >= config.quickPassCount;
+  const verdictClear = favor > against || against > favor;
+  if (quickPassReached && verdictClear) {
+    const isQuickGuilty = favor > against;
+    log(`群 ${group_id} 达到快速决议条件: ${total}>=${config.quickPassCount} 赞成${favor} 反对${against}, 有罪: ${isQuickGuilty}`);
     
     if (session.timeout) clearTimeout(session.timeout);
     
