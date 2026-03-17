@@ -475,10 +475,13 @@ export async function getCommon(context) {
         if (!error.response) {
             global.replyMsg(context, `书库暂时维护中`, false, true);
         }
-        else if (error.response && error.response.data && error.response.data.user_message) {
+        else if (error.response.data?.user_message) {
             global.replyMsg(context, error.response.data.user_message, false, true);
         }
-        else if (error.response && error.response.status === 400) {
+        else if (error.response.data?.message) {
+            global.replyMsg(context, error.response.data.message, false, true);
+        }
+        else if (error.response.status === 400) {
             global.replyMsg(context, `书库暂时维护中`, false, true);
         }
     });
@@ -1971,10 +1974,14 @@ function handleApiError(error, context, action = "操作") {
     if (!error.response) {
         global.replyMsg(context, `书库暂时维护中，已加入${action}缓存`, false, true);
     }
-    else if (error.response.data && error.response.data.user_message) {
+    else if (error.response.data?.user_message) {
         global.replyMsg(context, error.response.data.user_message, false, true);
     }
-    else if (error.response && error.response.status === 400) {
+    else if (error.response.data?.message) {
+        // 统一错误格式兼容：读取 message 字段
+        global.replyMsg(context, error.response.data.message, false, true);
+    }
+    else if (error.response.status === 400) {
         global.replyMsg(context, `书库暂时维护中`, false, true);
     }
 }
