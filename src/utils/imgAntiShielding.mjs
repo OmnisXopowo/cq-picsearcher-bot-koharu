@@ -1,6 +1,7 @@
 import { readFileSync } from 'fs';
 import Jimp from 'jimp';
 import { random } from 'lodash-es';
+import safeJimpRead from './safeJimpRead.mjs';
 
 const RAND_MOD_PX = 0b1;
 const ROTATE_LEFT = 0b10;
@@ -14,7 +15,7 @@ const ROTATE_DOWN = 0b1000;
  * @returns base64
  */
 export async function imgAntiShieldingFromArrayBuffer(arrayBuffer, mode) {
-  const img = await Jimp.read(Buffer.from(arrayBuffer));
+  const img = await safeJimpRead(Buffer.from(arrayBuffer));
   return await imgAntiShielding(img, mode);
 }
 
@@ -26,7 +27,7 @@ export async function imgAntiShieldingFromArrayBuffer(arrayBuffer, mode) {
  */
 export async function imgAntiShieldingFromFilePath(filePath, mode) {
   const buffer = readFileSync(filePath);
-  const img = await Jimp.read(buffer);
+  const img = await safeJimpRead(buffer);
   return await imgAntiShielding(img, mode);
 }
 

@@ -4,6 +4,7 @@ import { promisify } from 'util';
 import imageSize from 'image-size';
 import Jimp from 'jimp';
 import { sumBy } from 'lodash-es';
+import safeJimpRead from './safeJimpRead.mjs';
 import promiseLimit from 'promise-limit';
 import sharp  from 'sharp';
 import asyncMap from './asyncMap.mjs';
@@ -82,7 +83,7 @@ export const dlImgToCache = async (url, config = {}, limit = false) => {
   // ✨ 改进：使用 Axios.download() 享受完整的降级链（多代理轮询、Puppeteer、FlareSolverr 等）
   const dlFn = () => Axios.download(targetUrl, { config });
   const response = await (limit ? dlImgLimit(dlFn) : dlFn());
-  return createCache(url, Buffer.from(response.data));
+  return await createCache(url, Buffer.from(response.data));
 };
 
 /**
@@ -104,7 +105,7 @@ export const dlImgToCacheBuffer = async (url, config = {}, limit = false) => {
   const dlFn = () => Axios.download(targetUrl, { config });
   const response = await (limit ? dlImgLimit(dlFn) : dlFn());
   const buffer = Buffer.from(response.data);
-  createCache(url, buffer);
+  await createCache(url, buffer);
   return buffer;
 };
 
@@ -172,14 +173,14 @@ const mergeImgs = async (paths, info) => {
   const cacheKey = mergePaths.join(',');
   const cachedImg = getCache(cacheKey);
   if (cachedImg) return [cachedImg, ...restPaths];
-  const imgs = await asyncMap(mergePaths, path => Jimp.read(path));
+  const imgs = await asyncMap(mergePaths, path => safeJimpRead(path));
   const mergedImg = new Jimp(info.width, info.height);
   for (const [i, img] of imgs.entries()) {
     const { x, y } = info.points[i];
     mergedImg.blit(img, x, y);
   }
   const buffer = await mergedImg.getBufferAsync(Jimp.MIME_PNG);
-  return [createCache(cacheKey, buffer), ...restPaths];
+  return [await createCache(cacheKey, buffer), ...restPaths];
 };
 
 /**
@@ -297,14 +298,14 @@ export class MsgImage {
    */
   async getJimp() {
     const path = await this.getPath();
-    if (path) return Jimp.read(path);
+    if (path) return safeJimpRead(path);
     if (this.isUrlValid) {
       const arrayBuffer = await retryAsync(
         () => Axios.get(this.url, { responseType: 'arraybuffer' }).then(r => r.data),
         3,
         e => e.code === 'ECONNRESET',
       );
-      return await Jimp.read(Buffer.from(arrayBuffer));
+      return await safeJimpRead(Buffer.from(arrayBuffer));
     }
     throw new Error('[MsgImage] getJimp no available image');
   }

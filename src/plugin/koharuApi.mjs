@@ -249,7 +249,7 @@ export async function illustRating(illustObj, context, rate) {
         ...apiContext
     }).then(result => {
         if (result.data.error) {
-            global.replyMsg(context, result.error, false, true);
+            global.replyMsg(context, result.data.error, false, true);
         } else {
             // 尝试将格式化后的结果转换为整数，如果小数部分为00
             global.replyMsg(context,
@@ -1855,7 +1855,7 @@ async function downloadImage(url, context, options = {}) {
             try {
                 console.log(`[E-Hentai] Layer 1: 尝试 Cookie 认证直连...`);
                 const response = await exhentaiAxios.get(targetUrl, { responseType: 'arraybuffer', timeout: 30000 });
-                const filepath = createCache(url, Buffer.from(response.data));
+                const filepath = await createCache(url, Buffer.from(response.data));
                 console.log(`[图片下载] ✓ ExHentai Cookie 认证成功 (${filepath}, 大小: ${response.data.length} bytes)`);
                 return CQ.img(filepath);
             } catch (error) {
@@ -1868,7 +1868,7 @@ async function downloadImage(url, context, options = {}) {
         // Layer 2: 多代理轮询 + 直连（axiosProxy.download 内部自动处理 Cookie）
         console.log(`[图片下载] Layer 2: 尝试多代理轮询...`);
         const response = await axios.download(targetUrl, { useProxy: useNetworkProxy });
-        const filepath = createCache(url, Buffer.from(response.data));
+        const filepath = await createCache(url, Buffer.from(response.data));
         console.log(`[图片下载] ✓ Layer 2 代理轮询成功 (${filepath}, 大小: ${response.data.length} bytes)`);
         return CQ.img(filepath);
         

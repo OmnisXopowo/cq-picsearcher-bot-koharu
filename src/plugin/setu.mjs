@@ -1,11 +1,11 @@
 import { URL } from 'url';
-import Jimp from 'jimp';
 import _, { result } from 'lodash-es';
 import NamedRegExp from 'named-regexp-groups';
 import urlShorten from '../urlShorten/index.mjs';
 import Axios from '../utils/axiosProxy.mjs';
 import CQ from '../utils/CQcode.mjs';
 import { imgAntiShielding } from '../utils/imgAntiShielding.mjs';
+import safeJimpRead from '../utils/safeJimpRead.mjs';
 import logError from '../utils/logError.mjs';
 import logger from '../utils/logger.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
@@ -49,7 +49,7 @@ async function lolisuki(r18, keyword) {
 async function dlImgAndAntiShielding(url) {
   const setting = global.config.bot.setu;
   const proxy = setting.pximgProxy.trim();
-  const img = await Jimp.read(
+  const img = await safeJimpRead(
     proxy ? Buffer.from(await Axios.get(url, { responseType: 'arraybuffer' }).then(r => r.data)) : url,
   );
   return await imgAntiShielding(img, global.config.bot.setu.antiShielding);

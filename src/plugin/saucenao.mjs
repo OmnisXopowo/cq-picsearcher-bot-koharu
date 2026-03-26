@@ -3,6 +3,7 @@ import FormData from 'form-data';
 import _ from 'lodash-es';
 import Axios from '../utils/axiosProxy.mjs';
 import CQ from '../utils/CQcode.mjs';
+import { flareSolverr } from '../utils/flareSolverr.mjs';
 import getSource from '../utils/getSource.mjs';
 import { getAntiShieldedCqImg64FromUrl, getCqImg64FromUrl } from '../utils/image.mjs';
 import logError from '../utils/logError.mjs';
@@ -58,7 +59,10 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
         }
 
         // 确保回应正确
-        if (typeof data !== 'object') throw ret;
+        if (typeof data !== 'object') {
+          console.error(`[saucenao] 响应数据类型异常: ${typeof data}，内容前200字符: ${String(data).slice(0, 200)}`);
+          throw ret;
+        }
         if (data.results && data.results.length > 0) {
           data.results.forEach(({ header }) => (header.similarity = parseFloat(header.similarity)));
           topSimilarity = data.results[0].header.similarity; // 保存最高相似度
@@ -198,8 +202,13 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
 
           // 处理返回提示
           if (warnMsg.length > 0) warnMsg = warnMsg.trim();
-        } else if (data.header.message) {
+        } else if (data.header?.message) {
           const retMsg = data.header.message;
+          console.warn(`[saucenao] API 返回消息: "${retMsg}"`, {
+            status: data.header.status,
+            short_remaining: data.header.short_remaining,
+            long_remaining: data.header.long_remaining,
+          });
           if (retMsg.startsWith('Specified file no longer exists on the remote server')) {
             msg = '该图片已过期，请尝试二次截图后发送';
           } else if (retMsg.startsWith('Problem with remote server')) {
@@ -209,6 +218,7 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
             msg = `saucenao-${hostIndex} ${CQ.escape(retMsg)}`;
           }
         } else {
+          console.error(`[saucenao] 响应数据结构异常，无 results 也无 header.message:`, JSON.stringify(data).slice(0, 500));
           logError(`[error] saucenao[${hostIndex}][data]`);
           logError(data);
         }
@@ -219,11 +229,21 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
           msg = e;
           logError(e);
         } else if (e.response) {
+          console.error(`[saucenao] HTTP 错误 ${e.response.status}:`, {
+            statusText: e.response.statusText,
+            contentType: e.response.headers?.['content-type'],
+            dataPreview: typeof e.response.data === 'string' ? e.response.data.slice(0, 300) : undefined,
+          });
           if (e.response.status === 429) {
             msg = `saucenao-${hostIndex} 搜索次数已达单位时间上限，请稍候再试`;
             excess = true;
-          } else logError(e.response.data);
-        } else logError(e);
+          } else {
+            logError(e.response.data);
+          }
+        } else {
+          console.error(`[saucenao] 非 HTTP 错误:`, e.message || e);
+          logError(e);
+        }
       });
   } else {
     msg = '未配置 saucenaoApiKey，无法使用 saucenao 搜图';
@@ -289,11 +309,15 @@ async function getSearchResult(host, api_key, img, db = 999) {
     hide: global.config.bot.hideImgWhenSaucenaoNSFW,
   };
 
+  const maskedKey = api_key ? `${api_key.slice(0, 4)}****${api_key.slice(-4)}` : '(none)';
+
+  // ========== 分支 A：本地上传模式（仅 Layer 1+2：多代理+直连） ==========
   if (global.config.bot.saucenaoLocalUpload || !img.isUrlValid) {
     const path = await img.getPath();
     if (path) {
       const form = new FormData();
       form.append('file', readFileSync(path), 'image');
+      console.log(`[saucenao] 使用本地上传模式 (key=${maskedKey})`);
       return Axios.searchPost(url, form, {
         params,
         headers: form.getHeaders(),
@@ -301,13 +325,54 @@ async function getSearchResult(host, api_key, img, db = 999) {
     }
   }
 
+  // ========== 分支 B：URL 模式（完整 4 层降级链） ==========
   if (img.isUrlValid) {
-    return Axios.searchGet(`${host}/search.php`, {
-      params: {
-        ...params,
-        url: img.url,
-      },
-    });
+    const fullParams = { ...params, url: img.url };
+
+    // --- Layer 1+2: Axios searchGet（多代理轮询 → 直连） ---
+    try {
+      console.log(`[saucenao] Layer 1+2: Axios searchGet (key=${maskedKey})`);
+      return await Axios.searchGet(url, { params: fullParams });
+    } catch (axiosErr) {
+      const errMsg = axiosErr?.message || String(axiosErr);
+      const status = axiosErr?.response?.status;
+      console.warn(`[saucenao] Layer 1+2 失败${status ? ` (HTTP ${status})` : ''}: ${errMsg}`);
+
+      // HTTP 429 是 API 频率限制，换工具请求同一个 api_key 仍会 429，不降级
+      if (status === 429) throw axiosErr;
+    }
+
+    // 构建完整 URL 供 Puppeteer/FlareSolverr 使用
+    const fullUrl = `${url}?${new URLSearchParams(fullParams).toString()}`;
+
+    // --- Layer 3: Puppeteer getJSON ---
+    try {
+      console.log('[saucenao] Layer 3: 尝试 Puppeteer getJSON...');
+      const { puppeteer } = await import('../../libs/puppeteer/index.mjs');
+      const result = await puppeteer.getJSON(fullUrl);
+      console.log('[saucenao] Layer 3: ✓ Puppeteer 成功');
+      return result;
+    } catch (puppeteerErr) {
+      console.warn(`[saucenao] Layer 3: ✗ Puppeteer 失败: ${puppeteerErr?.message || puppeteerErr}`);
+    }
+
+    // --- Layer 4: FlareSolverr getJSON ---
+    const fsUrl = global.config?.flaresolverr?.url;
+    if (fsUrl) {
+      try {
+        console.log('[saucenao] Layer 4: 尝试 FlareSolverr getJSON...');
+        const result = await flareSolverr.getJSON(fullUrl);
+        console.log('[saucenao] Layer 4: ✓ FlareSolverr 成功');
+        return result;
+      } catch (fsErr) {
+        console.error(`[saucenao] Layer 4: ✗ FlareSolverr 失败: ${fsErr?.message || fsErr}`);
+      }
+    } else {
+      console.log('[saucenao] Layer 4: 跳过 FlareSolverr（未配置 flaresolverr.url）');
+    }
+
+    // 所有层都失败
+    throw new Error('[saucenao] 所有请求方式均失败（多代理→直连→Puppeteer→FlareSolverr）');
   }
 
   // eslint-disable-next-line no-throw-literal

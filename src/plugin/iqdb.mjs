@@ -2,6 +2,7 @@ import { load } from 'cheerio';
 import _ from 'lodash';
 import AxiosProxy from '../utils/axiosProxy.mjs';
 import { getCqImg64FromUrl, getAntiShieldedCqImg64FromUrl, dlImgToCacheBuffer } from '../utils/image.mjs';
+import logError from '../utils/logError.mjs';
 import { confuseURL } from '../utils/url.mjs';
 
 
@@ -21,12 +22,14 @@ async function IqDB(url) {
   if (discolor) params.append('forcegray', 'on');
 
   try {
+    console.log(`[iqdb] 开始搜索: ${url.slice(0, 80)}...`);
     const { data } = await AxiosProxy.searchPost('https://danbooru.iqdb.org/', params, {
       headers,
       validateStatus: status => (200 <= status && status < 500),
     });
 
     const IqDBResults = parse(data);
+    console.log(`[iqdb] ✓ 搜索完成，找到 ${IqDBResults?.length || 0} 个结果`);
 
     if(IqDBResults && IqDBResults.length > 0){
       const res = IqDBResults[0];
@@ -47,7 +50,16 @@ async function IqDB(url) {
       isLowAcc: true
     };
   } catch (error) {
-    console.error(`Iqdb error:`, error.message);
+    const status = error.response?.status;
+    console.error(`[iqdb] ✗ 搜索失败${status ? ` (HTTP ${status})` : ''}: ${error.message}`);
+    if (error.response) {
+      console.error(`[iqdb] 响应详情:`, {
+        statusText: error.response.statusText,
+        contentType: error.response.headers?.['content-type'],
+        dataPreview: typeof error.response.data === 'string' ? error.response.data.slice(0, 300) : undefined,
+      });
+    }
+    logError(error);
     return {
       ReturnMsg: `Iqdb 搜索出错：${error.message}`,
       success: false,

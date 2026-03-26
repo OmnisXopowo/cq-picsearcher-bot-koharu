@@ -76,3 +76,6 @@ config.jsonc.backup
 .vs/ProjectSettings.json
 # Voices bank (large media files)
 src/voicesBank/
+
+# VS Code workspace files
+*.code-workspace
