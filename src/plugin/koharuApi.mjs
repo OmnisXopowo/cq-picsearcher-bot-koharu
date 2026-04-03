@@ -62,13 +62,13 @@ function getDisplayName(context) {
 /**
  * 获取用于 API 提交的完整上下文信息（异步）
  * @param {object} context 消息上下文
- * @returns {Promise<{group: number, user: number, display_name: string|undefined, group_name: string|undefined}>}
+ * @returns {Promise<{group_id: number, qq_id: number, display_name: string|undefined, group_name: string|undefined}>}
  */
 async function getApiContext(context) {
     const groupName = context.group_id ? await getGroupName(context.group_id, context.self_id) : undefined;
     return {
-        group: context.group_id ?? 0,
-        user: context.user_id,
+        group_id: context.group_id ?? 0,
+        qq_id: context.user_id,
         display_name: getDisplayName(context),
         group_name: groupName
     };
@@ -109,10 +109,11 @@ export async function getContextFromUrl(context) {
 
 
     let failedResults = [];
+    let archiveResult = null;
     
     if (hasImage(context.message)) {
         // 图片搜索和入库在 ArchivedImg 中完成
-        const archiveResult = await ArchivedImg(context, isFromReply);
+        archiveResult = await ArchivedImg(context, isFromReply);
         isImg = true;
         
         // 如果有成功入库的结果，直接返回 true（已处理完成）
@@ -157,6 +158,12 @@ export async function getContextFromUrl(context) {
     // 如果没有找到匹配项，返回false
     if (isImg) {
         let notFoundMsg = `未搜索到收录图站`;
+        
+        // 如果有图片已提交到归档队列，追加提示
+        const queuedCount = archiveResult?.queuedCount || 0;
+        if (queuedCount > 0) {
+            notFoundMsg += `（已提交${queuedCount}张至归档队列）`;
+        }
         
         // 多图全部失败时，逐行显示每张图的ACC信息
         if (failedResults.length > 1) {
@@ -229,6 +236,204 @@ async function illustAddDanbooru(illustId, context) {
         throw error;
     });
     return response.data;
+}
+
+
+/**
+ * 提交失败的搜索任务到后端归档队列（两阶段协议）
+ * 
+ * 阶段 1: 发送 image_url + local_path（不含 base64）
+ * 阶段 2: 如果阶段 1 返回 needs_retry_with_base64=true，携带 base64 重试
+ * 
+ * @param {MsgImage} img - 图片对象
+ * @param {object} context - 消息上下文
+ * @param {object} options - 额外信息
+ * @param {object|null} options.searchResults - 搜索引擎返回的原始数据
+ * @param {string|null} options.lastErrorType - 失败的错误类型
+ * @param {string|null} options.lastErrorMessage - 失败的错误消息
+ * @returns {Promise<{success: boolean, queue_id?: number}>}
+ */
+async function submitToArchiveQueue(img, context, options = {}) {
+    const { searchResults = null, lastErrorType = null, lastErrorMessage = null } = options;
+    
+    try {
+        const apiContext = await getApiContext(context);
+        const localPath = await img.getPath().catch(() => undefined);
+        
+        // 阶段 1: URL + local_path
+        const payload = {
+            image_url: img.url,
+            source_site: 'qq_cdn',
+            image_local_path: localPath || null,
+            search_results_json: searchResults,
+            last_error_type: lastErrorType,
+            last_error_message: lastErrorMessage,
+            qq_id: apiContext.qq_id,
+            group_id: apiContext.group_id,
+            display_name: apiContext.display_name,
+            group_name: apiContext.group_name,
+        };
+        
+        const response = await koharuAxios.post('/api/image-archive/queue', payload);
+        const result = response.data;
+        
+        // 阶段 2: 如果后端无法缓存图片，携带 base64 重试
+        if (result.needs_retry_with_base64) {
+            console.log('图片归档 - 阶段 1 缓存失败，尝试 base64 重试:', img.url.substring(0, 80));
+            try {
+                // 通过 local_path 读取文件或通过 URL 下载
+                const MAX_BASE64_FILE_SIZE = 20 * 1024 * 1024; // 20MB 上限
+                let base64Data = null;
+                const imgPath = localPath || await img.getPath().catch(() => null);
+                if (imgPath) {
+                    const { readFileSync, statSync } = await import('fs');
+                    const fileSize = statSync(imgPath).size;
+                    if (fileSize > MAX_BASE64_FILE_SIZE) {
+                        console.warn(`图片归档 - 文件过大，跳过 base64 重试: ${fileSize} bytes`);
+                        return result;
+                    }
+                    base64Data = readFileSync(imgPath).toString('base64');
+                } else if (img.isUrlValid) {
+                    const dlResp = await axios.get(img.url, { responseType: 'arraybuffer', timeout: 30000 });
+                    if (dlResp.data.byteLength > MAX_BASE64_FILE_SIZE) {
+                        console.warn(`图片归档 - 下载文件过大，跳过 base64 重试: ${dlResp.data.byteLength} bytes`);
+                        return result;
+                    }
+                    base64Data = Buffer.from(dlResp.data).toString('base64');
+                }
+                if (base64Data) {
+                    const retryPayload = {
+                        ...payload,
+                        image_base64: base64Data,
+                    };
+                    const retryResponse = await koharuAxios.post('/api/image-archive/queue', retryPayload);
+                    console.log('图片归档 - base64 重试完成:', retryResponse.data.image_cached ? '缓存成功' : '缓存失败');
+                    return retryResponse.data;
+                }
+            } catch (retryErr) {
+                console.warn('图片归档 - base64 重试失败:', retryErr.message || retryErr);
+                return result;
+            }
+        }
+        
+        console.log(`图片归档 - 已提交到队列: id=${result.queue_id} cached=${result.image_cached}`);
+        return result;
+    } catch (error) {
+        console.error('图片归档 - 提交失败:', error.message || error);
+        return { success: false };
+    }
+}
+
+
+/**
+ * 成功入库后提交图片到缓存系统（SSIM 校验 + S3 同步）
+ * 
+ * @param {MsgImage|null} img - QQBot 图片对象（可选，URL 入库时无图片）
+ * @param {string} linkedRecordType - 关联记录类型: illust_collection / danbooru_collection / ehentai_gallery
+ * @param {number|string} linkedRecordId - 关联记录 ID
+ * @param {object} context - 消息上下文
+ */
+async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context) {
+    // URL 入库没有图片对象，跳过
+    if (!img) return;
+
+    try {
+        const apiContext = await getApiContext(context);
+        const localPath = await img.getPath().catch(() => undefined);
+
+        const payload = {
+            image_url: img.url,
+            source_site: 'qq_cdn',
+            image_local_path: localPath || null,
+            linked_record_type: linkedRecordType,
+            linked_record_id: typeof linkedRecordId === 'string' ? parseInt(linkedRecordId) : linkedRecordId,
+            qq_id: apiContext.qq_id,
+            group_id: apiContext.group_id,
+        };
+
+        const response = await koharuAxios.post('/api/image-cache/submit', payload);
+        const result = response.data;
+        console.log(`图片缓存 - 提交完成: cache_key=${result.cache_key} ssim=${result.ssim_score} passed=${result.ssim_passed}`);
+    } catch (error) {
+        // 缓存提交失败不影响入库结果，静默处理
+        console.warn('图片缓存 - 提交失败（不影响入库）:', error.message || error);
+    }
+}
+
+
+/**
+ * 检查是否有待通知的异步搜索结果，有则发送并标记已通知
+ * @param {Object} context 消息上下文
+ * @returns {Promise<number>} 通知的结果数
+ */
+async function checkAndNotifyPendingResults(context) {
+    try {
+        const apiContext = await getApiContext(context);
+        if (apiContext.qq_id == null) return 0;
+
+        const response = await koharuAxios.get('/api/image-archive/pending-notifications', {
+            params: { qq_id: apiContext.qq_id, limit: 5 },
+        });
+        const results = response.data?.data;
+        if (!results || !results.length) return 0;
+
+        // 构建通知消息
+        const lines = [`📦 你有 ${results.length} 个搜索结果:`];
+        const queueIds = [];
+        for (const r of results) {
+            queueIds.push(r.id);
+            const source = r.matched_source || '未知';
+            const itemId = r.matched_item_id || '';
+            const status = r.status === 'completed' ? '✅' : '❌';
+            const sim = r.ssim_score != null ? ` (SSIM ${(r.ssim_score * 100).toFixed(1)}%)` : '';
+            const credit = r.credit_awarded ? ' +1积分' : '';
+            lines.push(`${status} ${source}/${itemId}${sim}${credit}`);
+        }
+        global.replyMsg(context, lines.join('\n'), false, true);
+
+        // 标记已通知
+        await koharuAxios.post('/api/image-archive/mark-notified', {
+            qq_id: apiContext.qq_id,
+            queue_ids: queueIds,
+        });
+        return results.length;
+    } catch (error) {
+        console.warn('通知检查失败（不影响收藏）:', error.message || error);
+        return 0;
+    }
+}
+
+
+/**
+ * 当 QQBot 搜索失败时，调用 Flask 后端搜索作为后备（过渡阶段）
+ * @param {string} imageUrl 图片 URL
+ * @param {string|null} localPath 本地文件路径
+ * @returns {Promise<Object|null>} 搜索结果或 null
+ */
+async function fallbackToBackendSearch(imageUrl, localPath) {
+    try {
+        const response = await koharuAxios.post('/api/image-search/search', {
+            image_url: imageUrl,
+            original_image_path: localPath || undefined,
+        });
+        const result = response.data;
+        // 后端返回 queued 状态表示搜索降级为异步
+        if (result?.status === 'queued') {
+            return { queued: true, queue_id: result.queue_id };
+        }
+        // 后端搜索有结果且标题有效
+        if (result?.title && result.title !== 'No results found') {
+            const sourceUrl = result.source_url || '';
+            const illustObj = matchUrlToIllust(sourceUrl);
+            if (illustObj) {
+                return { matched: true, illustObj, result };
+            }
+        }
+        return null;
+    } catch (error) {
+        console.warn('后端搜索后备失败:', error.message || error);
+        return null;
+    }
 }
 
 
@@ -885,9 +1090,12 @@ async function handleTagsAndPlayVoice(tags, context) {
  * 图片搜索存档功能，仅使用saucenao和Iqdb，搜索完一张就立即处理入库
  * @param {Object} context 消息上下文
  * @param {boolean} isFromReply 是否来自引用消息（用于决定是否使用reply模式）
- * @returns {Promise<{hasResult: boolean, failedResults: Array<{index: number, snSimilarity: number|null, iqdbSimilarity: number|null}>}>} 搜索结果对象
+ * @returns {Promise<{hasResult: boolean, failedResults: Array<{index: number, snSimilarity: number|null, iqdbSimilarity: number|null}>, queuedCount: number}>} 搜索结果对象
  */
 export async function ArchivedImg(context, isFromReply = false) {
+
+    // 前置通知检查：展示之前异步搜索的完成结果
+    await checkAndNotifyPendingResults(context);
 
     // 得到图片链接并搜图
     const msg = context.message;
@@ -899,17 +1107,18 @@ export async function ArchivedImg(context, isFromReply = false) {
         global.replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
     }
 
-    if (!imgs.length) return { hasResult: false, failedResults: [] };
+    if (!imgs.length) return { hasResult: false, failedResults: [], queuedCount: 0 };
 
     let hasAnyResult = false; // 是否有任何一张图片成功入库
     const failedResults = []; // 记录所有失败图片的相似度信息
+    let queuedCount = 0; // 已提交归档队列的数量
 
     for (let i = 0; i < imgs.length; i++) {
         const img = imgs[i];
         
-        // 如果不是第一张图，等待10秒避免触发限流
+        // 如果不是第一张图，等待5秒避免触发限流
         if (i > 0) {
-            console.log(`图片存档 - 等待10秒后搜索第 ${i + 1} 张图片`);
+            console.log(`图片存档 - 等待5秒后搜索第 ${i + 1} 张图片`);
             await new Promise(resolve => setTimeout(resolve, 5000));
         }
         
@@ -975,22 +1184,63 @@ export async function ArchivedImg(context, isFromReply = false) {
             const illustObj = matchUrlToIllust(resultUrl);
             if (illustObj) {
                 console.log(`图片存档 - 匹配到图站 ${i + 1}/${imgs.length}:`, illustObj);
-                await processIllustObj(illustObj, context, isFromReply);
+                await processIllustObj(illustObj, context, isFromReply, img);
                 hasAnyResult = true;
             } else {
-                // 有搜索结果URL但无法匹配到图站，记录失败
-                failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
+                // 有搜索结果URL但无法匹配到图站
+                // → 尝试调用后端搜索作为后备（过渡阶段）
+                const localPath = await img.getPath?.().catch(() => undefined);
+                const backendResult = await fallbackToBackendSearch(img.url, localPath || null);
+                if (backendResult?.matched) {
+                    console.log(`图片存档 - 后端搜索匹配 ${i + 1}/${imgs.length}:`, backendResult.illustObj);
+                    await processIllustObj(backendResult.illustObj, context, isFromReply, img);
+                    hasAnyResult = true;
+                } else if (backendResult?.queued) {
+                    console.log(`图片存档 - 后端搜索降级为异步 ${i + 1}/${imgs.length}: queue_id=${backendResult.queue_id}`);
+                    global.replyMsg(context, `⏳ 搜索超时已提交后台队列 (#${backendResult.queue_id})`, false, true);
+                    queuedCount++;
+                } else {
+                    // 后端也未匹配，提交到归档队列
+                    failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
+                    const queueResult = await submitToArchiveQueue(img, context, {
+                        searchResults: { resultUrl, snSimilarity, iqdbSimilarity },
+                        lastErrorType: 'no_site_match',
+                        lastErrorMessage: `搜索到结果但无法匹配图站: ${resultUrl.substring(0, 200)}`,
+                    });
+                    if (queueResult && queueResult.success) queuedCount++;
+                }
             }
         } else {
-            // 没有搜索结果，记录失败
-            failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
+            // 没有搜索结果
+            // → 尝试调用后端搜索作为后备（过渡阶段）
+            const localPath = await img.getPath?.().catch(() => undefined);
+            const backendResult = await fallbackToBackendSearch(img.url, localPath || null);
+            if (backendResult?.matched) {
+                console.log(`图片存档 - 后端搜索匹配 ${i + 1}/${imgs.length}:`, backendResult.illustObj);
+                await processIllustObj(backendResult.illustObj, context, isFromReply, img);
+                hasAnyResult = true;
+            } else if (backendResult?.queued) {
+                console.log(`图片存档 - 后端搜索降级为异步 ${i + 1}/${imgs.length}: queue_id=${backendResult.queue_id}`);
+                global.replyMsg(context, `⏳ 搜索超时已提交后台队列 (#${backendResult.queue_id})`, false, true);
+                queuedCount++;
+            } else {
+                // 后端也无结果，提交到归档队列
+                failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
+                const queueResult = await submitToArchiveQueue(img, context, {
+                    searchResults: { snSimilarity, iqdbSimilarity },
+                    lastErrorType: 'no_result',
+                    lastErrorMessage: 'SauceNAO 和 IQDB 均未找到匹配结果',
+                });
+                if (queueResult && queueResult.success) queuedCount++;
+            }
         }
     }
 
     // 返回是否有成功入库的结果，以及所有失败图片的相似度信息
     return { 
         hasResult: hasAnyResult, 
-        failedResults 
+        failedResults,
+        queuedCount,
     };
 }
 
@@ -1031,13 +1281,15 @@ function matchUrlToIllust(resultUrl) {
 }
 
 // 处理单个作品入库
-async function processIllustObj(illustObj, context, shouldReply = true) {
+async function processIllustObj(illustObj, context, shouldReply = true, sourceImg = null) {
     if (illustObj.type === 'pixiv') {
         try {
             const result = await illustAddPixiv(illustObj.id, context);
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
+                // 成功入库后提交图片缓存
+                submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context);
                 // 构建合并消息（参考Danbooru的实现方式）
                 const texts = [];
                 texts.push(`${result.message}:${result.author}<${result.title}>\n${result.caption}`);
@@ -1084,6 +1336,8 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
+                // 成功入库后提交图片缓存
+                submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context);
                 const texts = [];
                 if (result.pixiv_id) {
                     texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
@@ -1140,6 +1394,8 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
+                // 成功入库后提交图片缓存（E-Hentai 暂不支持来源图片对比）
+                submitImageCacheAfterAdd(sourceImg, 'ehentai_gallery', 0, context);
                 replyEhentaiRatingMsg(illustObj.url, context, `${result.message}\n来源：${illustObj.url}`);
                 replyCollectReply(context, result);
             }
@@ -1148,23 +1404,83 @@ async function processIllustObj(illustObj, context, shouldReply = true) {
         }
         return true;
     } else if (illustObj.type === 'nhentai') {
-        try {
-            const result = await illustAddNhentai(illustObj.gid, context);
-            if (result.error) {
-                global.replyMsg(context, result.error, false, true);
-            } else {
-                replyNhentaiRatingMsg(illustObj.gid, context, `${result.message}\n来源：https://nhentai.net/g/${illustObj.gid}/`);
-                replyCollectReply(context, result);
-            }
-        } catch (error) {
-            handleApiError(error, context, "投稿");
-        }
+        // NHentai 直接收录功能开发中（nhentai-add 接口尚未实装）
+        // TODO: 后续实现 nhentai 收录 API 后替换此提示
+        global.replyMsg(context, `NHentai 收录功能正在开发中，暂时无法收录`, false, true);
         return true;
     }
     return false;
 }
 
 
+/**
+ * /搜索结果 命令处理器
+ * @param {Object} context 消息上下文
+ * @returns {Promise<boolean>} 是否处理了命令
+ */
+export async function searchResults(context) {
+    try {
+        const apiContext = await getApiContext(context);
+        if (apiContext.qq_id == null) {
+            global.replyMsg(context, '未能获取用户信息', false, true);
+            return true;
+        }
+
+        // 解析页码: /搜索结果 2 → page=2
+        const rawMsg = getRawMessage(context);
+        const pageMatch = rawMsg.match(/\/搜索结果\s*(\d+)?/);
+        const page = pageMatch?.[1] ? parseInt(pageMatch[1]) : 1;
+
+        const response = await koharuAxios.get('/api/image-archive/user-results', {
+            params: { qq_id: apiContext.qq_id, page, page_size: 5 },
+        });
+        const data = response.data?.data;
+        if (!data || !data.items?.length) {
+            global.replyMsg(context, '📋 暂无搜索记录', false, true);
+            return true;
+        }
+
+        const totalPages = Math.ceil(data.total / 5);
+        const lines = [`📋 你的搜索结果 (第${page}页/共${totalPages}页)`, '─────────────'];
+
+        for (let i = 0; i < data.items.length; i++) {
+            const r = data.items[i];
+            let icon = '⏳';
+            let info = '搜索中...';
+
+            if (r.status === 'completed') {
+                icon = '✅';
+                const source = r.matched_source || '未知';
+                const itemId = r.matched_item_id || '';
+                const sim = r.ssim_score != null ? ` (${(r.ssim_score * 100).toFixed(1)}%)` : '';
+                const credit = r.credit_awarded ? ' +1积分' : '';
+                info = `${source}/${itemId}${sim}${credit}`;
+            } else if (r.status === 'failed') {
+                icon = '❌';
+                info = `未找到来源 (已重试 ${r.retry_count}/3)`;
+            } else if (r.status === 'expired') {
+                icon = '⏰';
+                info = '已过期';
+            } else if (r.status === 'processing') {
+                icon = '🔄';
+                info = '处理中...';
+            }
+
+            lines.push(`${i + 1}. ${icon} #${r.id} ${info}`);
+        }
+
+        if (totalPages > 1) {
+            lines.push(`\n使用 /搜索结果 ${page + 1} 查看下一页`);
+        }
+
+        global.replyMsg(context, lines.join('\n'), false, true);
+        return true;
+    } catch (error) {
+        console.error('搜索结果查询失败:', error.message || error);
+        global.replyMsg(context, '查询失败，请稍后再试', false, true);
+        return true;
+    }
+}
 
 
 export default async (context) => {
@@ -1717,8 +2033,8 @@ export async function groupXpDiagnosisReport(context) {
         const apiContext = await getApiContext(context);
         const response = await koharuAxios.post('/api/stats/card/image', {
             scope: 'group',
-            groupId: context.group_id,
-            groupName: apiContext.group_name,
+            group_id: context.group_id,
+            group_name: apiContext.group_name,
             period,
         }, { responseType: 'arraybuffer' });
         const imgCQ = CQ.img64(response.data);
@@ -1948,8 +2264,8 @@ export async function breastReduction(context) {
             const { data } = await koharuAxios.post('/api/ai-image/detect', {
                 plugin_id: 'breast_reduction',
                 image_url: imageUrl,
-                qq_id: apiCtx.user,
-                group_id: apiCtx.group || undefined,
+                qq_id: apiCtx.qq_id,
+                group_id: apiCtx.group_id || undefined,
             });
             detectResult = data;
         } catch (error) {
@@ -1971,8 +2287,8 @@ export async function breastReduction(context) {
         const { data: result } = await koharuAxios.post('/api/ai-image/process', {
             plugin_id: 'breast_reduction',
             image_url: imageUrl,
-            qq_id: apiCtx.user,
-            group_id: apiCtx.group || undefined,
+            qq_id: apiCtx.qq_id,
+            group_id: apiCtx.group_id || undefined,
             skip_detection: true,
         });
 

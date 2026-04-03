@@ -66,26 +66,16 @@ import { Redis } from 'ioredis';
 
 
 export async function setKeyValue(key, value, expiryInSeconds) {
-
-  // 检查是否提供了过期时间
-  if (expiryInSeconds !== undefined) {
-    // 如果提供了过期时间，使用SET命令的EX参数设置过期时间
-    redis.set(key, value.toString(), 'EX', expiryInSeconds)
-      .then(() => {
-        console.log(`[RDS save]${key}:${value} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
-      })
-      .catch((err) => {
-        console.error(`[RDS save]保存失败 ${key}:${value} -${err}`);
-      });
-  } else {
-    // 如果没有提供过期时间，只设置键值
-    redis.set(key, value)
-      .then(() => {
-        console.log(`[RDS save]${key}:${value}`);
-      })
-      .catch((err) => {
-        console.error(`[RDS save]保存失败 ${key}:${value} -${err}`);
-      });
+  try {
+    const safeValue = value == null ? '' : String(value);
+    if (expiryInSeconds !== undefined) {
+      await redis.set(key, safeValue, 'EX', expiryInSeconds);
+    } else {
+      await redis.set(key, safeValue);
+    }
+    console.log(`[RDS save]${key}:${value}${expiryInSeconds ? ` 于${expiryInSeconds}秒过期` : ''}`);
+  } catch (err) {
+    console.error(`[RDS save]保存失败 ${key}:${value} -${err}`);
   }
 }
 
