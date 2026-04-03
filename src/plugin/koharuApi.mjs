@@ -14,6 +14,7 @@ import { getRawMessage } from '../utils/message.mjs';
 import { getKeyObject, setKeyObject, buildRedisKey, buildRedisKeyPattern } from '../utils/redisClient.mjs';
 import voiceManager from '../voicesBank/VoiceManager.mjs';
 import IqDB from './iqdb.mjs';
+import { getLocalReverseProxyURL } from './pximg.mjs';
 import saucenao, { snDB } from './saucenao.mjs';
 
 // Koharu API 专用 axios 实例
@@ -684,10 +685,10 @@ export async function getCommon(context) {
                     } else if (illust.meta_pages && illust.meta_pages.length > 0) {
                         RndIndex = Math.floor(Math.random() * illust.meta_pages.length);
                         sendImg = illust.meta_pages[RndIndex];
-                    } else if (illust.meta_large) {
-                        sendImg = illust.meta_large;
                     } else if (illust.meta_single_page) {
                         sendImg = illust.meta_single_page;
+                    } else if (illust.meta_large) {
+                        sendImg = illust.meta_large;
                     }
                     const titleStr = searchResult.data.title ? `${searchResult.data.title}\n` : '';
 
@@ -696,20 +697,25 @@ export async function getCommon(context) {
                         const sendUrls = [];
                         if (setting.sendPximgProxies.length) {
                             for (const imgProxy of setting.sendPximgProxies) {
-                                const path = new URL(sendImg).pathname.replace(/^\//, '');
-                                if (!/{{.+}}/.test(imgProxy)) {
-                                    const imgUrl = new URL(path, imgProxy).href;
+                                const imgUrl = getSetuUrl(imgProxy, sendImg);
+                                if (imgUrl) {
                                     sendUrls.push(imgUrl);
                                 }
                             }
-                            if (sendUrls.length === 1) preSendMsgs.push(`代理：${sendUrls[0]}`);
-                            else preSendMsgs.push('代理：', ...sendUrls);
+                        }
 
-                            replyPixivRatingMsg(illust.id_illust, context, preSendMsgs.join('\n'), trace);
+                        if (sendUrls.length === 1) preSendMsgs.push(`代理：${sendUrls[0]}`);
+                        else if (sendUrls.length > 1) preSendMsgs.push('代理：', ...sendUrls);
 
-                            if (sendUrls[0]) {
-                                replyPixivRatingMsg(illust.id_illust, context, await CQ.imgPreDl(sendUrls[0]), trace);
-                            }
+                        replyPixivRatingMsg(illust.id_illust, context, preSendMsgs.join('\n'), trace);
+
+                        const requestUrl = getPixivRequestUrl(sendImg);
+                        if (requestUrl) {
+                            console.log(
+                                `[Pixiv发送] 搜索结果单图预下载: illust=${illust.id_illust} ` +
+                                `url=${summarizeLogValue(requestUrl, 120)}`
+                            );
+                            replyPixivRatingMsg(illust.id_illust, context, await CQ.imgPreDl(requestUrl), trace);
                         }
                     }
                     else {
@@ -717,7 +723,7 @@ export async function getCommon(context) {
                         replyPixivRatingMsg(illust.id_illust, context, preSendMsgs.join('\n'), trace);
 
                         const preMsg = illust.meta_large_pages.map(pageUrl => {
-                            const url = getSetuUrl(proxy, pageUrl);
+                            const url = getPixivRequestUrl(pageUrl);
                             if (url) {
                                 return CQ.img(url);
                             }
@@ -1427,10 +1433,16 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                 if (result.isR18) {
                     texts.push('R18？？？  不可以涩涩！ 死刑！');
                     replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
-                } else if (result.meta_single_page) {
-                    const url = getSetuUrl(proxy, result.meta_large);
+                } else if (result.meta_single_page || result.meta_large) {
+                    const sourceUrl = result.meta_single_page || result.meta_large;
+                    const url = getPixivRequestUrl(sourceUrl);
                     if (url) {
                         try {
+                            console.log(
+                                `[Pixiv发送] 投稿单图预下载: illust=${illustObj.id} ` +
+                                `source=${result.meta_single_page ? 'meta_single_page' : 'meta_large'} ` +
+                                `url=${summarizeLogValue(url, 120)}`
+                            );
                             const imgCQ = await CQ.imgPreDl(url);
                             texts.push(imgCQ);
                         } catch (e) {
@@ -1438,9 +1450,9 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                         }
                     }
                     replyPixivRatingMsg(illustObj.id, context, texts.join('\n'));
-                } else if (result.meta_large_pages) {
+                } else if (result.meta_large_pages && result.meta_large_pages.length > 0) {
                     const imgCQs = result.meta_large_pages.map(pageUrl => {
-                        const url = getSetuUrl(proxy, pageUrl);
+                        const url = getPixivRequestUrl(pageUrl);
                         if (url) {
                             return CQ.img(url);
                         }
@@ -1665,8 +1677,42 @@ function replyNhentaiRatingMsg(gid, context, msg) {
 }
 
 export function getSetuUrl(proxy, url) {
+    if (!proxy || !url) {
+        return null;
+    }
+
+    const trimmedProxy = String(proxy).trim();
+    if (!trimmedProxy) {
+        return null;
+    }
+
+    const templateData = getPixivProxyTemplateData(url);
+    if (!/{{.+}}/.test(trimmedProxy)) {
+        return new URL(templateData.path, trimmedProxy).href;
+    }
+
+    return _.template(trimmedProxy, { interpolate: /{{([\s\S]+?)}}/g })(templateData);
+}
+
+function getPixivProxyTemplateData(url) {
     const path = new URL(url).pathname.replace(/^\//, '');
-    if (!/{{.+}}/.test(proxy)) return new URL(path, proxy).href;
+    const fileMatch = path.match(/(?<pid>\d+)_p(?<page>\d+)(?:_[^./]+)?\.(?<ext>[a-zA-Z0-9]+)$/);
+
+    return {
+        path,
+        pid: fileMatch?.groups?.pid || '',
+        p: fileMatch?.groups?.page || '',
+        uid: '',
+        ext: fileMatch?.groups?.ext || '',
+    };
+}
+
+function getPixivRequestUrl(url) {
+    if (!url) {
+        return null;
+    }
+
+    return proxy ? getSetuUrl(proxy, url) : getLocalReverseProxyURL(url);
 }
 
 export function checkRatingMsg(msgRet, selfId) {
