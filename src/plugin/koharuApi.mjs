@@ -74,6 +74,43 @@ async function getApiContext(context) {
     };
 }
 
+function summarizeLogValue(value, maxLength = 96) {
+    if (value == null || value === '') {
+        return 'none';
+    }
+
+    const normalized = String(value)
+        .replace(/[\u200B-\u200D\uFEFF]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    if (!normalized) {
+        return 'none';
+    }
+
+    return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function unwrapKoharuApiPayload(response, endpoint) {
+    const payload = response?.data;
+
+    if (!payload || typeof payload !== 'object') {
+        return payload ?? null;
+    }
+
+    if (!Object.prototype.hasOwnProperty.call(payload, 'success')) {
+        return payload;
+    }
+
+    if (!payload.success) {
+        const message = payload.user_message || payload.message || payload.error || 'unknown_error';
+        console.warn(`[Koharu API] ${endpoint} 返回 success=false: ${summarizeLogValue(message, 100)}`);
+        return null;
+    }
+
+    return Object.prototype.hasOwnProperty.call(payload, 'data') ? payload.data : payload;
+}
+
 export async function getContextFromUrl(context) {
     let isImg = false;
     let isFromReply = false; // 标记是否来自引用消息
@@ -259,6 +296,7 @@ async function submitToArchiveQueue(img, context, options = {}) {
     try {
         const apiContext = await getApiContext(context);
         const localPath = await img.getPath().catch(() => undefined);
+        const urlSummary = summarizeLogValue(img.url, 88);
         
         // 阶段 1: URL + local_path
         const payload = {
@@ -273,13 +311,24 @@ async function submitToArchiveQueue(img, context, options = {}) {
             display_name: apiContext.display_name,
             group_name: apiContext.group_name,
         };
+
+        console.log(
+            `[图片归档] 提交归档队列: qq=${apiContext.qq_id} group=${apiContext.group_id} ` +
+            `local_path=${localPath ? 'yes' : 'no'} error_type=${lastErrorType || 'none'} url=${urlSummary}`
+        );
         
         const response = await koharuAxios.post('/api/image-archive/queue', payload);
         const result = response.data;
+
+        console.log(
+            `[图片归档] 阶段1响应: status=${result?.status || 'unknown'} ` +
+            `queue_id=${result?.queue_id ?? 'none'} cached=${result?.image_cached === true} ` +
+            `needs_base64=${result?.needs_retry_with_base64 === true}`
+        );
         
         // 阶段 2: 如果后端无法缓存图片，携带 base64 重试
         if (result.needs_retry_with_base64) {
-            console.log('图片归档 - 阶段 1 缓存失败，尝试 base64 重试:', img.url.substring(0, 80));
+            console.log(`[图片归档] 阶段1缓存失败，开始 base64 重试: url=${urlSummary}`);
             try {
                 // 通过 local_path 读取文件或通过 URL 下载
                 const MAX_BASE64_FILE_SIZE = 20 * 1024 * 1024; // 20MB 上限
@@ -302,24 +351,38 @@ async function submitToArchiveQueue(img, context, options = {}) {
                     base64Data = Buffer.from(dlResp.data).toString('base64');
                 }
                 if (base64Data) {
+                    console.log(`[图片归档] 发送 base64 重试: queue_id=${result?.queue_id ?? 'none'} url=${urlSummary}`);
                     const retryPayload = {
                         ...payload,
                         image_base64: base64Data,
                     };
                     const retryResponse = await koharuAxios.post('/api/image-archive/queue', retryPayload);
-                    console.log('图片归档 - base64 重试完成:', retryResponse.data.image_cached ? '缓存成功' : '缓存失败');
+                    console.log(
+                        `[图片归档] base64 重试完成: status=${retryResponse.data?.status || 'unknown'} ` +
+                        `queue_id=${retryResponse.data?.queue_id ?? 'none'} cached=${retryResponse.data?.image_cached === true}`
+                    );
                     return retryResponse.data;
                 }
+                console.warn(`[图片归档] 无法生成 base64 重试数据: url=${urlSummary}`);
             } catch (retryErr) {
                 console.warn('图片归档 - base64 重试失败:', retryErr.message || retryErr);
                 return result;
             }
         }
         
-        console.log(`图片归档 - 已提交到队列: id=${result.queue_id} cached=${result.image_cached}`);
+        if (!result?.success || (!result?.queue_id && result?.status !== 'duplicate')) {
+            console.warn(
+                `[图片归档] 队列响应异常: status=${result?.status || 'unknown'} ` +
+                `queue_id=${result?.queue_id ?? 'none'} message=${summarizeLogValue(result?.message, 80)}`
+            );
+        } else {
+            console.log(`图片归档 - 已提交到队列: id=${result.queue_id} cached=${result.image_cached}`);
+        }
         return result;
     } catch (error) {
-        console.error('图片归档 - 提交失败:', error.message || error);
+        const status = error.response?.status || 'network';
+        const message = error.response?.data?.user_message || error.response?.data?.message || error.message || error;
+        console.error(`[图片归档] 提交失败: status=${status} message=${summarizeLogValue(message, 100)}`);
         return { success: false };
     }
 }
@@ -410,16 +473,40 @@ async function checkAndNotifyPendingResults(context) {
  * @param {string|null} localPath 本地文件路径
  * @returns {Promise<Object|null>} 搜索结果或 null
  */
-async function fallbackToBackendSearch(imageUrl, localPath) {
+async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
+    const urlSummary = summarizeLogValue(imageUrl, 88);
+    const qqId = context?.user_id ?? 'unknown';
+    const groupId = context?.group_id ?? 0;
+
+    console.log(
+        `[图片回退] 请求 Flask 搜索: qq=${qqId} group=${groupId} ` +
+        `local_path=${localPath ? 'yes' : 'no'} url=${urlSummary}`
+    );
+
     try {
         const response = await koharuAxios.post('/api/image-search/search', {
             image_url: imageUrl,
             original_image_path: localPath || undefined,
+            qq_id: context?.user_id,
+            group_id: context?.group_id ?? 0,
         });
-        const result = response.data;
+
+        const result = unwrapKoharuApiPayload(response, '/api/image-search/search');
+
+        if (!result || typeof result !== 'object') {
+            console.warn(`[图片回退] Flask 搜索返回空载荷: url=${urlSummary}`);
+            return { empty: true, reason: 'empty_payload' };
+        }
+
+        const resultStatus = result.status || (result.title && result.title !== 'No results found' ? 'matched' : 'empty');
+        console.log(
+            `[图片回退] Flask 搜索响应: status=${resultStatus} ` +
+            `title=${summarizeLogValue(result.title, 48)} source=${summarizeLogValue(result.source_url, 88)}`
+        );
+
         // 后端返回 queued 状态表示搜索降级为异步
         if (result?.status === 'queued') {
-            return { queued: true, queue_id: result.queue_id };
+            return { queued: true, queue_id: result.queue_id, result };
         }
         // 后端搜索有结果且标题有效
         if (result?.title && result.title !== 'No results found') {
@@ -428,11 +515,17 @@ async function fallbackToBackendSearch(imageUrl, localPath) {
             if (illustObj) {
                 return { matched: true, illustObj, result };
             }
+            console.warn(`[图片回退] Flask 命中结果但无法映射图站: source=${summarizeLogValue(sourceUrl, 88)}`);
+            return { empty: true, reason: 'unmatched_source_url', result };
         }
-        return null;
+        const reason = result?.message || 'no_result';
+        console.log(`[图片回退] Flask 搜索未命中: reason=${summarizeLogValue(reason, 72)}`);
+        return { empty: true, reason, result };
     } catch (error) {
-        console.warn('后端搜索后备失败:', error.message || error);
-        return null;
+        const status = error.response?.status || 'network';
+        const message = error.response?.data?.user_message || error.response?.data?.message || error.message || error;
+        console.warn(`[图片回退] Flask 搜索失败: status=${status} message=${summarizeLogValue(message, 100)} url=${urlSummary}`);
+        return { error: true, message, statusCode: error.response?.status ?? null };
     }
 }
 
@@ -1190,7 +1283,13 @@ export async function ArchivedImg(context, isFromReply = false) {
                 // 有搜索结果URL但无法匹配到图站
                 // → 尝试调用后端搜索作为后备（过渡阶段）
                 const localPath = await img.getPath?.().catch(() => undefined);
-                const backendResult = await fallbackToBackendSearch(img.url, localPath || null);
+                console.log(
+                    `[图片存档] 本地候选无法直接入库，开始回退 Flask: index=${i + 1}/${imgs.length} ` +
+                    `sn=${snSimilarity != null ? Math.round(snSimilarity) : 'none'} ` +
+                    `iqdb=${iqdbSimilarity != null ? Math.round(iqdbSimilarity) : 'none'} ` +
+                    `source=${summarizeLogValue(resultUrl, 88)}`
+                );
+                const backendResult = await fallbackToBackendSearch(img.url, localPath || null, context);
                 if (backendResult?.matched) {
                     console.log(`图片存档 - 后端搜索匹配 ${i + 1}/${imgs.length}:`, backendResult.illustObj);
                     await processIllustObj(backendResult.illustObj, context, isFromReply, img);
@@ -1201,20 +1300,38 @@ export async function ArchivedImg(context, isFromReply = false) {
                     queuedCount++;
                 } else {
                     // 后端也未匹配，提交到归档队列
+                    console.log(
+                        `[图片存档] Flask 未直接命中，转归档队列: index=${i + 1}/${imgs.length} ` +
+                        `reason=${summarizeLogValue(backendResult?.reason || backendResult?.message, 72)}`
+                    );
                     failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
                     const queueResult = await submitToArchiveQueue(img, context, {
                         searchResults: { resultUrl, snSimilarity, iqdbSimilarity },
                         lastErrorType: 'no_site_match',
                         lastErrorMessage: `搜索到结果但无法匹配图站: ${resultUrl.substring(0, 200)}`,
                     });
-                    if (queueResult && queueResult.success) queuedCount++;
+                    if (queueResult && queueResult.success) {
+                        queuedCount++;
+                        console.log(
+                            `[图片存档] 归档队列已提交: index=${i + 1}/${imgs.length} ` +
+                            `queue_id=${queueResult.queue_id ?? 'none'} status=${queueResult.status || 'unknown'} ` +
+                            `cached=${queueResult.image_cached === true}`
+                        );
+                    } else {
+                        console.warn(`[图片存档] 归档队列提交失败: index=${i + 1}/${imgs.length} url=${summarizeLogValue(img.url, 88)}`);
+                    }
                 }
             }
         } else {
             // 没有搜索结果
             // → 尝试调用后端搜索作为后备（过渡阶段）
             const localPath = await img.getPath?.().catch(() => undefined);
-            const backendResult = await fallbackToBackendSearch(img.url, localPath || null);
+            console.log(
+                `[图片存档] 本地搜索无结果，开始回退 Flask: index=${i + 1}/${imgs.length} ` +
+                `sn=${snSimilarity != null ? Math.round(snSimilarity) : 'none'} ` +
+                `iqdb=${iqdbSimilarity != null ? Math.round(iqdbSimilarity) : 'none'}`
+            );
+            const backendResult = await fallbackToBackendSearch(img.url, localPath || null, context);
             if (backendResult?.matched) {
                 console.log(`图片存档 - 后端搜索匹配 ${i + 1}/${imgs.length}:`, backendResult.illustObj);
                 await processIllustObj(backendResult.illustObj, context, isFromReply, img);
@@ -1225,13 +1342,26 @@ export async function ArchivedImg(context, isFromReply = false) {
                 queuedCount++;
             } else {
                 // 后端也无结果，提交到归档队列
+                console.log(
+                    `[图片存档] Flask 回退仍无结果，转归档队列: index=${i + 1}/${imgs.length} ` +
+                    `reason=${summarizeLogValue(backendResult?.reason || backendResult?.message, 72)}`
+                );
                 failedResults.push({ index: i + 1, snSimilarity, iqdbSimilarity });
                 const queueResult = await submitToArchiveQueue(img, context, {
                     searchResults: { snSimilarity, iqdbSimilarity },
                     lastErrorType: 'no_result',
                     lastErrorMessage: 'SauceNAO 和 IQDB 均未找到匹配结果',
                 });
-                if (queueResult && queueResult.success) queuedCount++;
+                if (queueResult && queueResult.success) {
+                    queuedCount++;
+                    console.log(
+                        `[图片存档] 归档队列已提交: index=${i + 1}/${imgs.length} ` +
+                        `queue_id=${queueResult.queue_id ?? 'none'} status=${queueResult.status || 'unknown'} ` +
+                        `cached=${queueResult.image_cached === true}`
+                    );
+                } else {
+                    console.warn(`[图片存档] 归档队列提交失败: index=${i + 1}/${imgs.length} url=${summarizeLogValue(img.url, 88)}`);
+                }
             }
         }
     }
