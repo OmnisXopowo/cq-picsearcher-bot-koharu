@@ -296,7 +296,10 @@ async function submitToArchiveQueue(img, context, options = {}) {
     
     try {
         const apiContext = await getApiContext(context);
-        const localPath = await img.getPath().catch(() => undefined);
+        const localPath = await img.getPath().catch((e) => {
+            console.warn(`[图片归档] getPath 失败 (file=${img.file}):`, e?.message || e);
+            return undefined;
+        });
         const urlSummary = summarizeLogValue(img.url, 88);
         
         // 阶段 1: URL + local_path
@@ -334,7 +337,10 @@ async function submitToArchiveQueue(img, context, options = {}) {
                 // 通过 local_path 读取文件或通过 URL 下载
                 const MAX_BASE64_FILE_SIZE = 20 * 1024 * 1024; // 20MB 上限
                 let base64Data = null;
-                const imgPath = localPath || await img.getPath().catch(() => null);
+                const imgPath = localPath || await img.getPath().catch((e) => {
+                    console.warn(`[图片归档] base64 重试 getPath 失败 (file=${img.file}):`, e?.message || e);
+                    return null;
+                });
                 if (imgPath) {
                     const { readFileSync, statSync } = await import('fs');
                     const fileSize = statSync(imgPath).size;
@@ -393,17 +399,26 @@ async function submitToArchiveQueue(img, context, options = {}) {
  * 成功入库后提交图片到缓存系统（SSIM 校验 + S3 同步）
  * 
  * @param {MsgImage|null} img - QQBot 图片对象（可选，URL 入库时无图片）
- * @param {string} linkedRecordType - 关联记录类型: illust_collection / danbooru_collection / ehentai_gallery
+ * @param {string} linkedRecordType - 关联记录类型: illust_collection / danbooru_collection
  * @param {number|string} linkedRecordId - 关联记录 ID
  * @param {object} context - 消息上下文
+ * @param {string|null} sourceImageUrl - 来源全尺寸图片 URL（由 /add 端点返回，直接传入可跳过 DB 查询）
  */
-async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context) {
+async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context, sourceImageUrl = null) {
     // URL 入库没有图片对象，跳过
     if (!img) return;
 
     try {
         const apiContext = await getApiContext(context);
-        const localPath = await img.getPath().catch(() => undefined);
+        const localPath = await img.getPath().catch((e) => {
+            console.warn(`[图片缓存] getPath 失败 (file=${img.file}):`, e?.message || e);
+            return undefined;
+        });
+
+        // 验证 sourceImageUrl 有效性
+        const normalizedSourceUrl = (sourceImageUrl && typeof sourceImageUrl === 'string' && sourceImageUrl.startsWith('http'))
+            ? sourceImageUrl
+            : null;
 
         const payload = {
             image_url: img.url,
@@ -411,16 +426,30 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             image_local_path: localPath || null,
             linked_record_type: linkedRecordType,
             linked_record_id: typeof linkedRecordId === 'string' ? parseInt(linkedRecordId) : linkedRecordId,
+            source_image_url: normalizedSourceUrl,
             qq_id: apiContext.qq_id,
             group_id: apiContext.group_id,
         };
 
+        console.log(
+            `[图片缓存] 开始提交: type=${linkedRecordType} id=${linkedRecordId} ` +
+            `source_url=${normalizedSourceUrl ? summarizeLogValue(normalizedSourceUrl, 88) : 'none'}`
+        );
+
         const response = await koharuAxios.post('/api/image-cache/submit', payload);
         const result = response.data;
-        console.log(`图片缓存 - 提交完成: cache_key=${result.cache_key} ssim=${result.ssim_score} passed=${result.ssim_passed}`);
+        console.log(
+            `[图片缓存] 提交完成: cache_key=${result.cache_key} ssim=${result.ssim_score} ` +
+            `passed=${result.ssim_passed} role=${result.image_role || 'unknown'}`
+        );
     } catch (error) {
-        // 缓存提交失败不影响入库结果，静默处理
-        console.warn('图片缓存 - 提交失败（不影响入库）:', error.message || error);
+        // 缓存提交失败不影响入库结果，但需要输出详细错误
+        const status = error?.response?.status;
+        const detail = error?.response?.data?.error || error?.response?.data?.message || '';
+        console.error(
+            `[图片缓存] 提交失败 (HTTP ${status || 'N/A'}): ${error.message || error}` +
+            (detail ? ` | detail: ${detail}` : '')
+        );
     }
 }
 
@@ -1307,7 +1336,10 @@ export async function ArchivedImg(context, isFromReply = false) {
             } else {
                 // 有搜索结果URL但无法匹配到图站
                 // → 尝试调用后端搜索作为后备（过渡阶段）
-                const localPath = await img.getPath?.().catch(() => undefined);
+                const localPath = await img.getPath().catch((e) => {
+                    console.warn(`[图片存档] getPath 失败 (file=${img.file}):`, e?.message || e);
+                    return undefined;
+                });
                 console.log(
                     `[图片存档] 本地候选无法直接入库，开始回退 Flask: index=${i + 1}/${imgs.length} ` +
                     `sn=${snSimilarity != null ? Math.round(snSimilarity) : 'none'} ` +
@@ -1350,7 +1382,10 @@ export async function ArchivedImg(context, isFromReply = false) {
         } else {
             // 没有搜索结果
             // → 尝试调用后端搜索作为后备（过渡阶段）
-            const localPath = await img.getPath?.().catch(() => undefined);
+            const localPath = await img.getPath().catch((e) => {
+                console.warn(`[图片存档] getPath 失败 (file=${img.file}):`, e?.message || e);
+                return undefined;
+            });
             console.log(
                 `[图片存档] 本地搜索无结果，开始回退 Flask: index=${i + 1}/${imgs.length} ` +
                 `sn=${snSimilarity != null ? Math.round(snSimilarity) : 'none'} ` +
@@ -1443,8 +1478,9 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
-                // 成功入库后提交图片缓存
-                submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context);
+                // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
+                const pixivSourceUrl = result.meta_single_page || result.meta_large || null;
+                submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context, pixivSourceUrl);
                 // 构建合并消息（参考Danbooru的实现方式）
                 const texts = [];
                 texts.push(`${result.message}:${result.author}<${result.title}>\n${result.caption}`);
@@ -1497,8 +1533,9 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
-                // 成功入库后提交图片缓存
-                submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context);
+                // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
+                const danbooruSourceUrl = result.file_url || result.large_file_url || null;
+                submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl);
                 const texts = [];
                 if (result.pixiv_id) {
                     texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
@@ -1555,8 +1592,7 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
             } else {
-                // 成功入库后提交图片缓存（E-Hentai 暂不支持来源图片对比）
-                submitImageCacheAfterAdd(sourceImg, 'ehentai_gallery', 0, context);
+                // E-Hentai 无单图来源 URL，不执行 SSIM 检查
                 replyEhentaiRatingMsg(illustObj.url, context, `${result.message}\n来源：${illustObj.url}`);
                 replyCollectReply(context, result);
             }
