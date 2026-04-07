@@ -2027,31 +2027,52 @@ function replyNoResultMsg(context, msg, trace = null) {
 }
 
 /**
- * 回复Pixiv评级消息
+ * 回复Pixiv评级消息，若 retcode 1200 则对图片进行反和谐处理后重发
  * @param {number} illustId 插画ID
  * @param {object} context 上下文对象
  * @param {string} msg 消息内容
  * @param {object} [trace] 搜索追踪信息（可选）
  */
-function replyPixivRatingMsg(illustId, context, msg, trace = null) {
+async function replyPixivRatingMsg(illustId, context, msg, trace = null) {
     const record = { id: illustId, type: 'pixiv' };
     if (trace) record.trace = trace;
-    global.replyMsg(context, msg, false, false)
-        .then(msgRet => {
-            if (msgRet?.retcode === 0) {
-                const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
-                console.log(`[Pixiv消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
+    const saveRecord = (msgRet) => {
+        if (msgRet?.retcode === 0) {
+            const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+            global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+            console.log(`[Pixiv消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
+        }
+    };
+
+    try {
+        const ret = await global.replyMsg(context, msg, false, false);
+        if (ret?.retcode === 0) { saveRecord(ret); return; }
+
+        if (ret?.retcode === 1200) {
+            console.warn(`[Pixiv消息] retcode 1200 → 尝试反和谐重发 (illustId: ${illustId})`);
+            const localPath = extractLocalPathFromCQ(msg);
+            if (localPath) {
+                try {
+                    const base64 = await imgAntiShieldingFromFilePath(localPath, 0b1);
+                    const antiMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img64(base64));
+                    const ret2 = await global.replyMsg(context, antiMsg, false, false);
+                    if (ret2?.retcode === 0) { saveRecord(ret2); console.log('[Pixiv消息] ✓ 反和谐重发成功'); return; }
+                    console.warn(`[Pixiv消息] 反和谐重发仍失败 (retcode: ${ret2?.retcode})`);
+                } catch (e) {
+                    console.error('[Pixiv消息] 反和谐处理出错:', e);
+                }
             } else {
-                console.error(`[Pixiv消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
-                console.error(`[Pixiv消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
-                console.error(`[Pixiv消息] 错误信息: ${msgRet?.message}`);
-                console.error(`[Pixiv消息] 完整返回:`, msgRet);
+                console.warn('[Pixiv消息] retcode 1200 但消息中无本地文件路径，无法反和谐');
             }
-        })
-        .catch(err => {
-            console.error('[Pixiv消息] ✗ 发送异常:', err);
-        });
+        }
+
+        console.error(`[Pixiv消息] ✗ 发送失败 (retcode: ${ret?.retcode}, status: ${ret?.status})`);
+        console.error(`[Pixiv消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
+        console.error(`[Pixiv消息] 错误信息: ${ret?.message}`);
+        console.error(`[Pixiv消息] 完整返回:`, ret);
+    } catch (err) {
+        console.error('[Pixiv消息] ✗ 发送异常:', err);
+    }
 }
 
 /**
