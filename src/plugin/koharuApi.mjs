@@ -426,6 +426,13 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
 
 
 /**
+ * 内存缓存：60 秒内同一用户跳过重复 pending 查询
+ * key: qq_id, value: 上次查询的时间戳
+ */
+const _pendingCheckCache = new Map();
+const PENDING_CHECK_INTERVAL_MS = 60_000;
+
+/**
  * 检查是否有待通知的异步搜索结果，有则发送并标记已通知
  * @param {Object} context 消息上下文
  * @returns {Promise<number>} 通知的结果数
@@ -435,9 +442,21 @@ async function checkAndNotifyPendingResults(context) {
         const apiContext = await getApiContext(context);
         if (apiContext.qq_id == null) return 0;
 
-        const response = await koharuAxios.get('/api/image-archive/pending-notifications', {
-            params: { qq_id: apiContext.qq_id, limit: 5 },
-        });
+        // 60 秒内同一用户跳过查询
+        const lastCheck = _pendingCheckCache.get(apiContext.qq_id);
+        if (lastCheck && Date.now() - lastCheck < PENDING_CHECK_INTERVAL_MS) return 0;
+        _pendingCheckCache.set(apiContext.qq_id, Date.now());
+
+        let response;
+        try {
+            response = await koharuAxios.get('/api/image-archive/pending-notifications', {
+                params: { qq_id: apiContext.qq_id, limit: 5 },
+            });
+        } catch (httpError) {
+            // HTTP 失败时清除缓存，确保下次请求可以重试
+            _pendingCheckCache.delete(apiContext.qq_id);
+            throw httpError;
+        }
         const results = response.data?.data;
         if (!results || !results.length) return 0;
 

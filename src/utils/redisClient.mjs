@@ -73,7 +73,7 @@ export async function setKeyValue(key, value, expiryInSeconds) {
     } else {
       await redis.set(key, safeValue);
     }
-    console.log(`[RDS save]${key}:${value}${expiryInSeconds ? ` 于${expiryInSeconds}秒过期` : ''}`);
+    if (global.config?.bot?.debug) console.log(`[RDS save]${key}:${value}${expiryInSeconds ? ` 于${expiryInSeconds}秒过期` : ''}`);
   } catch (err) {
     console.error(`[RDS save]保存失败 ${key}:${value} -${err}`);
   }
@@ -88,7 +88,7 @@ export async function setKeyValue(key, value, expiryInSeconds) {
 export async function getKeyValue(key, defaultValue) {
   const value = await redis.get(key);
   if (value) {
-    console.log(`[RDS read]${key}:${value}`);
+    if (global.config?.bot?.debug) console.log(`[RDS read]${key}:${value}`);
     return value;
   } else {
     return defaultValue !== undefined ? defaultValue : value;
@@ -102,11 +102,11 @@ export async function setKeyObject(key, value, expiryInSeconds) {
     if (expiryInSeconds !== undefined) {
       // 如果提供了过期时间，使用SET命令的EX参数设置过期时间
       await redis.set(key, obj, 'EX', expiryInSeconds);
-      console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
+      if (global.config?.bot?.debug) console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
     } else {
       // 如果没有提供过期时间，只设置键值
       await redis.set(key, obj);
-      console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
+      if (global.config?.bot?.debug) console.log(`[RDS save]${key}:${obj.length > 100 ? obj.substring(0, 100) + '...' : obj} ${expiryInSeconds ? `于${expiryInSeconds}秒过期` : ''}`);
     }
   } catch (err) {
     console.error(`[RDS save]保存失败 ${key}: ${err}`);
@@ -124,7 +124,7 @@ export async function getKeyObject(key, defaultValue) {
   try {
     const value = await redis.get(key);
     if (value) {
-      console.log(`[RDS read]${key}:${value.length > 100 ? value.substring(0, 100) + '...' : value}`);
+      if (global.config?.bot?.debug) console.log(`[RDS read]${key}:${value.length > 100 ? value.substring(0, 100) + '...' : value}`);
       return JSON.parse(value);
     }
     return defaultValue !== undefined ? defaultValue : null;
@@ -142,7 +142,7 @@ export async function getKeyObject(key, defaultValue) {
 export async function delKey(key) {
   try {
     const result = await redis.del(key);
-    console.log(`[RDS del]${key}: ${result}`);
+    if (global.config?.bot?.debug) console.log(`[RDS del]${key}: ${result}`);
     return result;
   } catch (err) {
     console.error(`[RDS del]删除失败 ${key}: ${err}`);
@@ -157,8 +157,17 @@ export async function delKey(key) {
  */
 export async function getKeys(pattern) {
   try {
-    const keys = await redis.keys(pattern);
-    console.log(`[RDS keys]${pattern}: 找到 ${keys.length} 个键`);
+    const keySet = new Set();
+    const stream = redis.scanStream({ match: pattern, count: 100 });
+    await new Promise((resolve, reject) => {
+      stream.on('data', (batch) => {
+        batch.forEach((key) => keySet.add(key));
+      });
+      stream.on('end', resolve);
+      stream.on('error', reject);
+    });
+    const keys = Array.from(keySet);
+    if (global.config?.bot?.debug) console.log(`[RDS keys]${pattern}: 找到 ${keys.length} 个键`);
     return keys;
   } catch (err) {
     console.error(`[RDS keys]搜索失败 ${pattern}: ${err}`);
