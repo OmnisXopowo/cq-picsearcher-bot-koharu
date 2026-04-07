@@ -343,8 +343,6 @@ async function illustAddPixiv(illustId, context) {
     const response = await koharuAxios.post('/api/pixiv/add', {
         illust: illustId,
         ...apiContext
-    }).catch(function (error) {
-        throw error;
     });
     return response.data;
 }
@@ -354,8 +352,6 @@ async function illustAddDanbooru(illustId, context) {
     const response = await koharuAxios.post('/api/danbooru/add', {
         illust: illustId,
         ...apiContext
-    }).catch(function (error) {
-        throw error;
     });
     return response.data;
 }
