@@ -50,6 +50,80 @@ const setting = global.config.bot.setu;
 const proxy = setting.pximgProxy.trim();
 const cooldownManager = new CooldownManager();
 
+// ── CDN URL 搜索去重缓存（Redis，TTL 1 天） ──
+const SEARCH_DEDUP_TTL = 86400; // 1 天（秒）
+const SEARCH_DEDUP_PREFIX = 'img_search_dedup';
+
+/**
+ * 构建图片搜索去重的 Redis key
+ * @param {string} normalizedUrl 经过 getUniversalImgURL() 规范化后的 QQ CDN URL
+ * @returns {string}
+ */
+function buildSearchDedupKey(normalizedUrl) {
+    // 直接使用规范化 URL 作为 key 的一部分（URL 本身唯一）
+    return `${SEARCH_DEDUP_PREFIX}:${normalizedUrl}`;
+}
+
+/**
+ * 查询 CDN URL 是否已有去重缓存记录
+ * @param {string} normalizedUrl
+ * @returns {Promise<{hit: boolean, data: object|null}>}
+ */
+async function getSearchDedupCache(normalizedUrl) {
+    try {
+        const key = buildSearchDedupKey(normalizedUrl);
+        const cached = await getKeyObject(key, null);
+        if (cached) {
+            return { hit: true, data: cached };
+        }
+    } catch (e) {
+        console.warn('[去重缓存] Redis 读取失败（不影响流程）:', e.message);
+    }
+    return { hit: false, data: null };
+}
+
+/**
+ * 写入 CDN URL 搜索去重缓存
+ * @param {string} normalizedUrl
+ * @param {object} result 缓存的状态信息 {status, queueId, message, matchedSource, matchedItemId, ssimScore}
+ */
+async function setSearchDedupCache(normalizedUrl, result) {
+    try {
+        const key = buildSearchDedupKey(normalizedUrl);
+        await setKeyObject(key, { ...result, cachedAt: Date.now() }, SEARCH_DEDUP_TTL);
+    } catch (e) {
+        console.warn('[去重缓存] Redis 写入失败（不影响流程）:', e.message);
+    }
+}
+
+/**
+ * 根据去重缓存状态生成用户友好提示
+ * @param {object} cached 缓存数据
+ * @param {boolean} isAdmin 是否管理员私聊
+ * @returns {string} 提示消息
+ */
+function buildDedupUserMessage(cached, isAdmin = false) {
+    const status = cached.status;
+    if (status === 'recently_completed') {
+        if (isAdmin) {
+            const source = cached.matchedSource || '未知';
+            const itemId = cached.matchedItemId || '';
+            const ssim = cached.ssimScore != null ? ` (SSIM ${(cached.ssimScore * 100).toFixed(1)}%)` : '';
+            return `📋 这张图之前搜到过啦~\n来源: ${source}${itemId ? '/' + itemId : ''}${ssim}`;
+        }
+        return '📋该图已完成入库，感谢收藏~';
+    }
+    if (status === 'already_queued' || status === 'queued' || status === 'duplicate') {
+        if (isAdmin) {
+            const queueId = cached.queueId ? ` (#${cached.queueId})` : '';
+            const retry = cached.retryCount != null ? ` 重试${cached.retryCount}次` : '';
+            return `⏳该图已经在队列了${queueId}${retry}，耐心等一下~`;
+        }
+        return '⏳该图已在队列了，耐心等一下~';
+    }
+    return null;
+}
+
 /**
  * 从 context 中提取用户显示名称（用于统计展示脱敏）
  * 优先使用群名片 > 昵称
@@ -132,8 +206,8 @@ function buildBatchSummary(detailedResults) {
     if (!detailedResults || detailedResults.length === 0) return null;
 
     const total = detailedResults.length;
-    const successCount = detailedResults.filter(r => r.status === 'success').length;
-    const hasNonSuccess = detailedResults.some(r => r.status !== 'success');
+    const successCount = detailedResults.filter(r => r.status === 'success' || r.status === 'dedup_completed').length;
+    const hasNonSuccess = detailedResults.some(r => r.status !== 'success' && r.status !== 'dedup_completed');
 
     if (!hasNonSuccess) return null;
 
@@ -161,17 +235,36 @@ function buildBatchSummary(detailedResults) {
             case 'archive_failed':
                 lines.push(`❌ [${r.index}] 归档失败${accStr}`);
                 break;
+            case 'source_unavailable_archived':
+                lines.push(`📦 [${r.index}] 来源不可用，已重新排队: ${r.detail || ''}${accStr}`);
+                break;
+            case 'source_unavailable_failed':
+                lines.push(`❌ [${r.index}] 来源不可用，排队失败: ${r.detail || ''}${accStr}`);
+                break;
             case 'skipped':
                 lines.push(`⏭️ [${r.index}] ${r.detail || '已跳过'}`);
+                break;
+            case 'dedup_completed':
+                lines.push(`📋 [${r.index}] 已有结果: ${r.detail || ''}${accStr}`);
+                break;
+            case 'dedup_queued':
+                lines.push(`⏳ [${r.index}] 已在队列中${accStr}`);
+                break;
+            case 'already_queued':
+                lines.push(`⏳ [${r.index}] 已在队列中${accStr}`);
                 break;
             default:
                 lines.push(`❓ [${r.index}] ${r.status}${accStr}`);
         }
     }
 
-    const archivedCount = detailedResults.filter(r => r.status === 'archived' || r.status === 'queued').length;
+    const archivedCount = detailedResults.filter(r => r.status === 'archived' || r.status === 'queued' || r.status === 'dedup_queued' || r.status === 'already_queued' || r.status === 'source_unavailable_archived').length;
     if (archivedCount > 0) {
         lines.push(`📦 归档/队列: ${archivedCount}张`);
+    }
+    const dedupCount = detailedResults.filter(r => r.status === 'dedup_completed').length;
+    if (dedupCount > 0) {
+        lines.push(`📋 已有结果: ${dedupCount}张`);
     }
 
     return lines.join('\n');
@@ -278,12 +371,12 @@ export async function getContextFromUrl(context) {
             }
         } else {
             // 非管理员/非私聊：保持原有行为
-            let notFoundMsg = `未搜索到收录图站`;
+            let notFoundMsg = '暂时没有找到来源呢';
             
             // 如果有图片已提交到归档队列，追加提示
             const queuedCount = archiveResult?.queuedCount || 0;
             if (queuedCount > 0) {
-                notFoundMsg += `（已提交${queuedCount}张至归档队列）`;
+                notFoundMsg += `，小春已经把${queuedCount}张排上队了`;
             }
             
             // 多图全部失败时，逐行显示每张图的ACC信息
@@ -468,8 +561,24 @@ async function submitToArchiveQueue(img, context, options = {}) {
             const itemId = result.matched_item_id || '';
             const ssim = result.ssim_score != null ? ` (SSIM ${(result.ssim_score * 100).toFixed(1)}%)` : '';
             console.log(`图片归档 - 近期已完成: source=${source} item=${itemId}${ssim}`);
+            // 写入去重缓存
+            await setSearchDedupCache(normalizedUrl, {
+                status: 'recently_completed', queueId: result.queue_id,
+                matchedSource: result.matched_source, matchedItemId: result.matched_item_id,
+                ssimScore: result.ssim_score ?? null,
+            });
+        } else if (result?.status === 'duplicate') {
+            console.log(`图片归档 - 任务已存在: queue_id=${result.queue_id ?? 'none'}`);
+            // 写入去重缓存
+            await setSearchDedupCache(normalizedUrl, {
+                status: 'duplicate', queueId: result.queue_id ?? null,
+            });
         } else {
             console.log(`图片归档 - 已提交到队列: id=${result.queue_id} cached=${result.image_cached}`);
+            // 写入去重缓存
+            await setSearchDedupCache(normalizedUrl, {
+                status: 'queued', queueId: result.queue_id ?? null,
+            });
         }
         return result;
     } catch (error) {
@@ -641,7 +750,30 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
 
         // 后端返回 queued 状态表示搜索降级为异步
         if (result?.status === 'queued') {
+            // 写入去重缓存
+            await setSearchDedupCache(getUniversalImgURL(imageUrl), {
+                status: 'queued', queueId: result.queue_id,
+            });
             return { queued: true, queue_id: result.queue_id, result };
+        }
+        // 后端队列预检：已在搜索队列中
+        if (result?.status === 'already_queued') {
+            await setSearchDedupCache(getUniversalImgURL(imageUrl), {
+                status: 'already_queued', queueId: result.queue_id,
+                retryCount: result.retry_count ?? null,
+            });
+            return { already_queued: true, queue_id: result.queue_id, result };
+        }
+        // 后端队列预检：近期已完成
+        if (result?.status === 'recently_completed') {
+            await setSearchDedupCache(getUniversalImgURL(imageUrl), {
+                status: 'recently_completed',
+                queueId: result.queue_id,
+                matchedSource: result.matched_source,
+                matchedItemId: result.matched_item_id,
+                ssimScore: result.ssim_score ?? null,
+            });
+            return { recently_completed: true, queue_id: result.queue_id, result };
         }
         // 后端搜索有结果且标题有效
         if (result?.title && result.title !== 'No results found') {
@@ -1350,14 +1482,91 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
     if (backendResult?.matched) {
         console.log(`图片存档 - 后端搜索匹配 ${index}/${totalCount}:`, backendResult.illustObj);
         const processResult = await processIllustObj(backendResult.illustObj, context, isFromReply, img);
+
+        // 来源不可用（作品已删除/不可访问等）→ 回退到归档队列等待重新搜索
+        if (processResult?.source_unavailable) {
+            console.log(
+                `[图片存档] 来源不可用，回退归档队列: index=${index}/${totalCount} ` +
+                `type=${backendResult.illustObj?.type} id=${backendResult.illustObj?.id} error=${processResult.error}`
+            );
+            const queueResult = await submitToArchiveQueue(img, context, {
+                searchResults: archiveOptions.searchResults,
+                lastErrorType: 'source_unavailable',
+                lastErrorMessage: `${backendResult.illustObj?.type} #${backendResult.illustObj?.id}: ${processResult.error}`,
+            });
+            if (queueResult?.success) {
+                const isAdmin = isAdminPrivateChat(context);
+                if (isAdmin) {
+                    global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，等后台重新搜源~`, false, true);
+                } else {
+                    global.replyMsg(context, '这张图的来源暂时失效，小春先排上队帮你重新找找~', false, true);
+                }
+                return {
+                    outcome: 'archived',
+                    hasResult: false,
+                    failedResult: { index, snSimilarity, iqdbSimilarity },
+                    detailedResult: { index, status: 'source_unavailable_archived', detail: processResult.error, snSimilarity, iqdbSimilarity },
+                };
+            }
+            return {
+                outcome: 'archive_failed',
+                hasResult: false,
+                failedResult: { index, snSimilarity, iqdbSimilarity },
+                detailedResult: { index, status: 'source_unavailable_failed', detail: processResult.error, snSimilarity, iqdbSimilarity },
+            };
+        }
+
+        // 写入去重缓存（搜索成功）
+        if (processResult?.success) {
+            await setSearchDedupCache(getUniversalImgURL(img.url), {
+                status: 'recently_completed',
+                matchedSource: backendResult.illustObj?.type,
+                matchedItemId: String(backendResult.illustObj?.id || ''),
+            });
+        }
         return {
             outcome: 'matched',
-            hasResult: true,
+            hasResult: processResult?.success ?? false,
             detailedResult: { index, status: processResult?.success ? 'success' : 'api_error', type: backendResult.illustObj.type, detail: processResult?.error, snSimilarity, iqdbSimilarity },
+        };
+    } else if (backendResult?.already_queued) {
+        // 后端队列预检：该图片已在搜索队列中
+        const isAdmin = isAdminPrivateChat(context);
+        const r = backendResult.result || {};
+        console.log(`图片存档 - 已在搜索队列 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
+        const userMsg = buildDedupUserMessage({
+            status: 'already_queued', queueId: backendResult.queue_id,
+            retryCount: r.retry_count ?? null,
+        }, isAdmin);
+        if (userMsg) global.replyMsg(context, userMsg, false, true);
+        return {
+            outcome: 'already_queued',
+            hasResult: false,
+            detailedResult: { index, status: 'already_queued', snSimilarity, iqdbSimilarity },
+        };
+    } else if (backendResult?.recently_completed) {
+        // 后端队列预检：该图片近期已搜索完成
+        const isAdmin = isAdminPrivateChat(context);
+        const r = backendResult.result || {};
+        console.log(`图片存档 - 近期已搜索 ${index}/${totalCount}: source=${r.matched_source || 'none'}`);
+        const userMsg = buildDedupUserMessage({
+            status: 'recently_completed',
+            matchedSource: r.matched_source, matchedItemId: r.matched_item_id,
+            ssimScore: r.ssim_score ?? null,
+        }, isAdmin);
+        if (userMsg) global.replyMsg(context, userMsg, false, true);
+        return {
+            outcome: 'recently_completed',
+            hasResult: true,
+            detailedResult: { index, status: 'dedup_completed', detail: `${r.matched_source || ''}/${r.matched_item_id || ''}`, snSimilarity, iqdbSimilarity },
         };
     } else if (backendResult?.queued) {
         console.log(`图片存档 - 后端搜索降级为异步 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
-        global.replyMsg(context, `⏳ 搜索超时已提交后台队列 (#${backendResult.queue_id})`, false, true);
+        if (isAdminPrivateChat(context)) {
+            global.replyMsg(context, `⏳ 搜索超时，已提交后台排队 (#${backendResult.queue_id})，有结果会告诉你~`, false, true);
+        } else {
+            global.replyMsg(context, '⏳ 搜索要花点时间，小春先排上队啦，有结果会告诉你哦~', false, true);
+        }
         return {
             outcome: 'queued',
             hasResult: false,
@@ -1374,11 +1583,43 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
             lastErrorMessage: archiveOptions.lastErrorMessage,
         });
         if (queueResult && queueResult.success) {
+            const qStatus = queueResult.status || 'unknown';
             console.log(
                 `[图片存档] 归档队列已提交: index=${index}/${totalCount} ` +
-                `queue_id=${queueResult.queue_id ?? 'none'} status=${queueResult.status || 'unknown'} ` +
+                `queue_id=${queueResult.queue_id ?? 'none'} status=${qStatus} ` +
                 `cached=${queueResult.image_cached === true}`
             );
+            // 归档队列返回去重状态时向用户反馈
+            const isAdmin = isAdminPrivateChat(context);
+            if (qStatus === 'duplicate') {
+                const userMsg = buildDedupUserMessage({ status: 'duplicate', queueId: queueResult.queue_id }, isAdmin);
+                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                return {
+                    outcome: 'already_queued',
+                    hasResult: false,
+                    detailedResult: { index, status: 'dedup_queued', snSimilarity, iqdbSimilarity },
+                };
+            }
+            if (qStatus === 'recently_completed') {
+                const userMsg = buildDedupUserMessage({
+                    status: 'recently_completed',
+                    matchedSource: queueResult.matched_source,
+                    matchedItemId: queueResult.matched_item_id,
+                    ssimScore: queueResult.ssim_score ?? null,
+                }, isAdmin);
+                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                return {
+                    outcome: 'recently_completed',
+                    hasResult: true,
+                    detailedResult: { index, status: 'dedup_completed', detail: `${queueResult.matched_source || ''}/${queueResult.matched_item_id || ''}`, snSimilarity, iqdbSimilarity },
+                };
+            }
+            // 正常入队
+            if (isAdmin) {
+                global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，有结果会通知你~`, false, true);
+            } else {
+                global.replyMsg(context, '📦已加入搜索队列~', false, true);
+            }
             return {
                 outcome: 'archived',
                 hasResult: false,
@@ -1444,6 +1685,34 @@ export async function ArchivedImg(context, isFromReply = false) {
             console.log('图片存档 - 图片比例不符合要求，跳过');
             detailedResults.push({ index: i + 1, status: 'skipped', detail: '图片比例不符合' });
             continue;
+        }
+
+        // ── CDN URL 去重预检（Redis 缓存 1 天） ──
+        const normalizedUrl = getUniversalImgURL(img.url);
+        const { hit: dedupHit, data: dedupData } = await getSearchDedupCache(normalizedUrl);
+        if (dedupHit && dedupData) {
+            const dedupStatus = dedupData.status;
+            const isAdmin = isAdminPrivateChat(context);
+            console.log(
+                `[去重预检] 命中缓存: status=${dedupStatus} queue_id=${dedupData.queueId ?? 'none'} ` +
+                `source=${dedupData.matchedSource || 'none'} url=${summarizeLogValue(normalizedUrl, 88)}`
+            );
+            // 已完成的搜索：直接提示用户
+            if (dedupStatus === 'recently_completed' && dedupData.matchedSource) {
+                const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                detailedResults.push({ index: i + 1, status: 'dedup_completed', detail: `${dedupData.matchedSource}/${dedupData.matchedItemId || ''}` });
+                hasAnyResult = true;
+                continue;
+            }
+            // 在队列中等待搜索：提示用户并跳过
+            if (dedupStatus === 'already_queued' || dedupStatus === 'queued' || dedupStatus === 'duplicate') {
+                const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                queuedCount++;
+                detailedResults.push({ index: i + 1, status: 'dedup_queued', detail: `queue_id=${dedupData.queueId ?? 'none'}` });
+                continue;
+            }
         }
 
         let useIqdb = false;
@@ -1513,7 +1782,8 @@ export async function ArchivedImg(context, isFromReply = false) {
                     },
                 });
                 if (fbResult.hasResult) hasAnyResult = true;
-                if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived') queuedCount++;
+                if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived' || fbResult.outcome === 'already_queued') queuedCount++;
+                if (fbResult.outcome === 'recently_completed') hasAnyResult = true;
                 if (fbResult.failedResult) failedResults.push(fbResult.failedResult);
                 detailedResults.push(fbResult.detailedResult);
             }
@@ -1530,7 +1800,8 @@ export async function ArchivedImg(context, isFromReply = false) {
                 },
             });
             if (fbResult.hasResult) hasAnyResult = true;
-            if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived') queuedCount++;
+            if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived' || fbResult.outcome === 'already_queued') queuedCount++;
+            if (fbResult.outcome === 'recently_completed') hasAnyResult = true;
             if (fbResult.failedResult) failedResults.push(fbResult.failedResult);
             detailedResults.push(fbResult.detailedResult);
         }
@@ -1639,8 +1910,21 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                 replyCollectReply(context, result);
             }
         } catch (error) {
-            handleApiError(error, context, "投稿");
-            _processStatus = { success: false, type: 'pixiv', error: error.response?.data?.user_message || error.response?.data?.message || error.message || '未知错误' };
+            const errData = error.response?.data;
+            const errMsg = errData?.error || errData?.user_message || errData?.message || error.message || '未知错误';
+            // Pixiv 来源不可用（作品已删除/非公开等）
+            const SOURCE_UNAVAILABLE_ERRORS = ['尚无此页', 'Page not found', 'Artist has made their work private.'];
+            const isSourceUnavailable = SOURCE_UNAVAILABLE_ERRORS.some(e => errMsg.includes(e));
+            if (isSourceUnavailable) {
+                console.warn(`[投稿] Pixiv 来源不可用: id=${illustObj.id} error=${errMsg}`);
+                if (isAdminPrivateChat(context)) {
+                    global.replyMsg(context, `⚠️ Pixiv #${illustObj.id} 来源不可用 (${errMsg})，尝试回退归档`, false, true);
+                }
+                // 不向普通用户发消息，由调用方决定后续处理
+            } else {
+                handleApiError(error, context, "投稿");
+            }
+            _processStatus = { success: false, type: 'pixiv', error: errMsg, source_unavailable: isSourceUnavailable };
         }
         return _processStatus;
     } else if (illustObj.type === 'danbooru') {
@@ -1701,8 +1985,19 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                 }
             }
         } catch (error) {
-            handleApiError(error, context, "投稿");
-            _processStatus = { success: false, type: 'danbooru', error: error.response?.data?.user_message || error.response?.data?.message || error.message || '未知错误' };
+            const errData = error.response?.data;
+            const errMsg = errData?.error || errData?.user_message || errData?.message || error.message || '未知错误';
+            const DANBOORU_UNAVAILABLE = ['作品不存在', 'Danbooru API 返回空数据', 'not found'];
+            const isSourceUnavailable = DANBOORU_UNAVAILABLE.some(e => errMsg.includes(e));
+            if (isSourceUnavailable) {
+                console.warn(`[投稿] Danbooru 来源不可用: id=${illustObj.id} error=${errMsg}`);
+                if (isAdminPrivateChat(context)) {
+                    global.replyMsg(context, `⚠️ Danbooru #${illustObj.id} 来源不可用 (${errMsg})，尝试回退归档`, false, true);
+                }
+            } else {
+                handleApiError(error, context, "投稿");
+            }
+            _processStatus = { success: false, type: 'danbooru', error: errMsg, source_unavailable: isSourceUnavailable };
         }
         return _processStatus;
     } else if (illustObj.type === 'ehentai') {
@@ -1718,8 +2013,19 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                 replyCollectReply(context, result);
             }
         } catch (error) {
-            handleApiError(error, context, "投稿");
-            _processStatus = { success: false, type: 'ehentai', error: error.response?.data?.user_message || error.response?.data?.message || error.message || '未知错误' };
+            const errData = error.response?.data;
+            const errMsg = errData?.error || errData?.user_message || errData?.message || error.message || '未知错误';
+            const EHENTAI_UNAVAILABLE = ['Cookie 已失效', '访问受限', '浏览配额已用完', '无效的画廊'];
+            const isSourceUnavailable = EHENTAI_UNAVAILABLE.some(e => errMsg.includes(e));
+            if (isSourceUnavailable) {
+                console.warn(`[投稿] EHentai 来源不可用: url=${illustObj.url} error=${errMsg}`);
+                if (isAdminPrivateChat(context)) {
+                    global.replyMsg(context, `⚠️ EHentai 来源不可用 (${errMsg})，尝试回退归档`, false, true);
+                }
+            } else {
+                handleApiError(error, context, "投稿");
+            }
+            _processStatus = { success: false, type: 'ehentai', error: errMsg, source_unavailable: isSourceUnavailable };
         }
         return _processStatus;
     } else if (illustObj.type === 'nhentai') {
@@ -1821,7 +2127,7 @@ function replyEhentaiRatingMsg(url, context, msg) {
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
                 const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+                setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[EHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[EHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -1840,7 +2146,7 @@ function replyNhentaiRatingMsg(gid, context, msg) {
         .then(msgRet => {
             if (msgRet && msgRet.retcode === 0) {
                 const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+                setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[NHentai消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[NHentai消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -2021,7 +2327,7 @@ function replyNoResultMsg(context, msg, trace = null) {
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
                 const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+                setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[无结果消息] ✓ 发送成功，已缓存trace (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[无结果消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -2045,7 +2351,7 @@ async function replyPixivRatingMsg(illustId, context, msg, trace = null) {
     const saveRecord = (msgRet) => {
         if (msgRet?.retcode === 0) {
             const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-            global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+            setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
             console.log(`[Pixiv消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
         }
     };
@@ -2113,7 +2419,7 @@ async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context
     const saveRecord = (msgRet) => {
         if (msgRet?.retcode === 0) {
             const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-            global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+            setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
             console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
         }
     };
@@ -2166,7 +2472,7 @@ function replyDanbooruRatingMsg(illustId, context, msg, reply = true, trace = nu
         .then(msgRet => {
             if (msgRet?.retcode === 0) {
                 const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
-                global.setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+                setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
                 console.log(`[Danbooru消息] ✓ 发送成功 (message_id: ${msgRet.data.message_id})`);
             } else {
                 console.error(`[Danbooru消息] ✗ 发送失败 (retcode: ${msgRet?.retcode}, status: ${msgRet?.status})`);
@@ -2704,21 +3010,24 @@ export async function breastReduction(context) {
  * @param {string} action - 正在执行的操作描述
  */
 function handleApiError(error, context, action = "操作") {
-    console.error('书库 - API 错误处理:', error);
+    const status = error.response?.status || 'network';
+    const errData = error.response?.data;
+    const detail = errData?.error || errData?.user_message || errData?.message || error.message || '未知错误';
+
+    // 管理员私聊：输出完整错误信息供调试
+    if (isAdminPrivateChat(context)) {
+        console.error(`书库 - API 错误 [${action}]: HTTP ${status} | ${detail}`);
+        global.replyMsg(context, `❌ ${action}失败 (HTTP ${status}): ${detail}`, false, true);
+        return;
+    }
+
+    // 普通用户：友好提示
+    console.error(`书库 - API 错误 [${action}]: HTTP ${status} | ${detail}`);
     if (!error.response) {
         global.replyMsg(context, `书库暂时维护中，已加入${action}缓存`, false, true);
-    }
-    else if (error.response.data?.user_message) {
-        global.replyMsg(context, error.response.data.user_message, false, true);
-    }
-    else if (error.response.data?.message) {
-        // 统一错误格式兼容：读取 message 字段
-        global.replyMsg(context, error.response.data.message, false, true);
-    }
-    else if (error.response.status === 400) {
-        global.replyMsg(context, `书库暂时维护中`, false, true);
-    }
-    else {
-        global.replyMsg(context, `${action}失败，请稍后重试`, false, true);
+    } else if (error.response.status === 400) {
+        global.replyMsg(context, `${action}遇到了一点问题，已通知维护(ŎдŎ；)`, false, true);
+    } else {
+        global.replyMsg(context, `${action}书库暂时维护中，等小春修好再试试吧~`, false, true);
     }
 }
