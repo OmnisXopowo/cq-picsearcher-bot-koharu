@@ -24,6 +24,8 @@ class FlareSolverr {
     this.client = new FlareSolverrClient(options.url);
     this.ua = '';
     this.lock = new AwaitLock();
+    // 保存未包装的 get 供 getJSON 内部调用，避免锁重入死锁
+    this._rawGet = this.get.bind(this);
     this.get = this.wrapFunc(this.get);
     this.getJSON = this.wrapFunc(this.getJSON);
     this.getImage = this.wrapFunc(this.getImage);
@@ -72,7 +74,7 @@ class FlareSolverr {
    * @returns {Promise<Awaited<ReturnType<FlareSolverr['get']>> & { data: any }>}
    */
   async getJSON(url) {
-    const r = await this.get(url);
+    const r = await this._rawGet(url);
     const $ = load(r.data);
 
     r.data = JSON.parse($('body > pre').text());
