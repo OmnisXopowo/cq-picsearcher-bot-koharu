@@ -7,7 +7,7 @@ import { CooldownManager } from '../utils/CooldownManager.mjs';
 import CQ from '../utils/CQcode.mjs';
 import dailyCountInstance from '../utils/dailyCount.mjs';
 import { getGroupName } from '../utils/groupInfoCache.mjs';
-import { checkImageHWRatio } from '../utils/image.mjs';
+import { checkImageHWRatio, getUniversalImgURL } from '../utils/image.mjs';
 import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
 import logError from '../utils/logError.mjs';
 import { getRawMessage } from '../utils/message.mjs';
@@ -382,9 +382,10 @@ async function submitToArchiveQueue(img, context, options = {}) {
         });
         const urlSummary = summarizeLogValue(img.url, 88);
         
-        // 阶段 1: URL + local_path
+        // 阶段 1: URL + local_path（发送规范化 URL 以确保后端去重一致性）
+        const normalizedUrl = getUniversalImgURL(img.url);
         const payload = {
-            image_url: img.url,
+            image_url: normalizedUrl,
             source_site: 'qq_cdn',
             image_local_path: localPath || null,
             search_results_json: searchResults,
@@ -457,11 +458,16 @@ async function submitToArchiveQueue(img, context, options = {}) {
             }
         }
         
-        if (!result?.success || (!result?.queue_id && result?.status !== 'duplicate')) {
+        if (!result?.success || (!result?.queue_id && result?.status !== 'duplicate' && result?.status !== 'recently_completed')) {
             console.warn(
                 `[图片归档] 队列响应异常: status=${result?.status || 'unknown'} ` +
                 `queue_id=${result?.queue_id ?? 'none'} message=${summarizeLogValue(result?.message, 80)}`
             );
+        } else if (result?.status === 'recently_completed') {
+            const source = result.matched_source || '未知';
+            const itemId = result.matched_item_id || '';
+            const ssim = result.ssim_score != null ? ` (SSIM ${(result.ssim_score * 100).toFixed(1)}%)` : '';
+            console.log(`图片归档 - 近期已完成: source=${source} item=${itemId}${ssim}`);
         } else {
             console.log(`图片归档 - 已提交到队列: id=${result.queue_id} cached=${result.image_cached}`);
         }
@@ -614,7 +620,7 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
 
     try {
         const response = await koharuAxios.post('/api/image-search/search', {
-            image_url: imageUrl,
+            image_url: getUniversalImgURL(imageUrl),
             original_image_path: localPath || undefined,
             qq_id: context?.user_id,
             group_id: context?.group_id ?? 0,
