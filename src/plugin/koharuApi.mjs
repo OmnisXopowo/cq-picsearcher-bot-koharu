@@ -198,31 +198,32 @@ function isAdminPrivateChat(context) {
 }
 
 /**
- * 构建批量收藏汇总消息（仅供管理员私聊使用）
+ * 构建批量收藏汇总消息（批量入库完成后统一输出）
  * @param {Array<{index: number, status: string, type?: string, detail?: string, snSimilarity?: number, iqdbSimilarity?: number}>} detailedResults
+ * @param {boolean} isAdmin 是否管理员私聊（控制是否显示 Acc 详情）
  * @returns {string|null} 汇总消息文本，全部成功时返回 null
  */
-function buildBatchSummary(detailedResults) {
+function buildBatchSummary(detailedResults, isAdmin = false) {
     if (!detailedResults || detailedResults.length === 0) return null;
 
     const total = detailedResults.length;
     const successCount = detailedResults.filter(r => r.status === 'success' || r.status === 'dedup_completed').length;
-    const hasNonSuccess = detailedResults.some(r => r.status !== 'success' && r.status !== 'dedup_completed');
 
-    if (!hasNonSuccess) return null;
+    // 过滤掉 success 状态（已通过单条消息发送了入库成功+图片）
+    const nonSuccessResults = detailedResults.filter(r => r.status !== 'success');
+    if (nonSuccessResults.length === 0) return null;
 
     const lines = [`📊 批量收藏报告 (${successCount}/${total} 成功)`];
 
-    for (const r of detailedResults) {
+    for (const r of nonSuccessResults) {
         const acc = [];
-        if (r.snSimilarity != null) acc.push(`Acc1:${Math.round(r.snSimilarity)}`);
-        if (r.iqdbSimilarity != null) acc.push(`Acc2:${Math.round(r.iqdbSimilarity)}`);
+        if (isAdmin) {
+            if (r.snSimilarity != null) acc.push(`Acc1:${Math.round(r.snSimilarity)}`);
+            if (r.iqdbSimilarity != null) acc.push(`Acc2:${Math.round(r.iqdbSimilarity)}`);
+        }
         const accStr = acc.length > 0 ? ` ${acc.join(' ')}` : '';
 
         switch (r.status) {
-            case 'success':
-                lines.push(`✅ [${r.index}] ${r.type || '未知'} 入库成功`);
-                break;
             case 'api_error':
                 lines.push(`⚠️ [${r.index}] ${r.type || '未知'}: ${r.detail || '处理异常'}${accStr}`);
                 break;
@@ -265,6 +266,14 @@ function buildBatchSummary(detailedResults) {
     const dedupCount = detailedResults.filter(r => r.status === 'dedup_completed').length;
     if (dedupCount > 0) {
         lines.push(`📋 已有结果: ${dedupCount}张`);
+    }
+    // SSIM 比对未通过的复审提交（从成功入库的图片中收集）
+    const ssimFailures = detailedResults.filter(r => r.ssimFailed);
+    if (ssimFailures.length > 0) {
+        for (const r of ssimFailures) {
+            const ssimInfo = r.ssimScore != null ? ` (SSIM ${(r.ssimScore * 100).toFixed(1)}%)` : '';
+            lines.push(`🔍 [${r.index}] ${r.type || '未知'} #${r.recordId || '?'} 比对未通过${ssimInfo}，已提交复审`);
+        }
     }
 
     return lines.join('\n');
@@ -314,9 +323,9 @@ export async function getContextFromUrl(context) {
         
         // 如果有成功入库的结果，直接返回 true（已处理完成）
         if (archiveResult && archiveResult.hasResult) {
-            // 管理员私聊：如果有任何非 success 的图片，追加汇总报告
-            if (isAdminPrivateChat(context) && archiveResult.detailedResults?.length > 1) {
-                const summary = buildBatchSummary(archiveResult.detailedResults);
+            // 多图批量模式：追加汇总报告（所有用户可见）
+            if (archiveResult.detailedResults?.length > 1) {
+                const summary = buildBatchSummary(archiveResult.detailedResults, isAdminPrivateChat(context));
                 if (summary) {
                     global.replyMsg(context, summary, false, true);
                 }
@@ -360,13 +369,15 @@ export async function getContextFromUrl(context) {
 
     // 如果没有找到匹配项，返回false
     if (isImg) {
-        // 管理员私聊：使用增强格式的汇总报告
-        if (isAdminPrivateChat(context) && archiveResult?.detailedResults?.length > 0) {
-            const summary = buildBatchSummary(archiveResult.detailedResults);
+        const isAdmin = isAdminPrivateChat(context);
+        const hasBatchResults = archiveResult?.detailedResults?.length > 1;
+        // 批量模式或管理员私聊：使用汇总报告格式
+        if (hasBatchResults || (isAdmin && archiveResult?.detailedResults?.length > 0)) {
+            const summary = buildBatchSummary(archiveResult?.detailedResults || [], isAdmin);
             if (summary) {
                 global.replyMsg(context, summary, false, true);
             } else {
-                // 全部成功但 hasResult 为 false（不应该发生，兆底）
+                // 全部成功但 hasResult 为 false（不应该发生，兜底）
                 global.replyMsg(context, `未搜索到收录图站`, false, true);
             }
         } else {
@@ -599,9 +610,9 @@ async function submitToArchiveQueue(img, context, options = {}) {
  * @param {object} context - 消息上下文
  * @param {string|null} sourceImageUrl - 来源全尺寸图片 URL（由 /add 端点返回，直接传入可跳过 DB 查询）
  */
-async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context, sourceImageUrl = null) {
+async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context, sourceImageUrl = null, suppressMessage = false) {
     // URL 入库没有图片对象，跳过
-    if (!img) return;
+    if (!img) return null;
 
     try {
         const apiContext = await getApiContext(context);
@@ -637,6 +648,16 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             `[图片缓存] 提交完成: cache_key=${result.cache_key} ssim=${result.ssim_score} ` +
             `passed=${result.ssim_passed} role=${result.image_role || 'unknown'}`
         );
+        // SSIM 检查未通过，通知用户已提交复审
+        if (result.ssim_passed === false) {
+            const type = linkedRecordType === 'illust_collection' ? 'pixiv' : 'danbooru';
+            const ssimInfo = result.ssim_score != null ? ` (SSIM ${(result.ssim_score * 100).toFixed(1)}%)` : '';
+            if (!suppressMessage) {
+                global.replyMsg(context, `⚠️ ${type} #${linkedRecordId} 图片比对未通过${ssimInfo}，已提交复审`, false, true);
+            }
+            return { ssimPassed: false, ssimScore: result.ssim_score, type, recordId: linkedRecordId };
+        }
+        return null;
     } catch (error) {
         // 缓存提交失败不影响入库结果，但需要输出详细错误
         const status = error?.response?.status;
@@ -645,6 +666,7 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             `[图片缓存] 提交失败 (HTTP ${status || 'N/A'}): ${error.message || error}` +
             (detail ? ` | detail: ${detail}` : '')
         );
+        return null;
     }
 }
 
@@ -1467,7 +1489,7 @@ async function handleTagsAndPlayVoice(tags, context) {
  * @param {string} params.archiveOptions.lastErrorMessage - 失败的错误消息
  * @returns {Promise<{outcome: string, hasResult: boolean, failedResult?: object, detailedResult: object}>}
  */
-async function handleBackendFallback({ img, context, isFromReply, index, totalCount, snSimilarity, iqdbSimilarity, archiveOptions }) {
+async function handleBackendFallback({ img, context, isFromReply, index, totalCount, snSimilarity, iqdbSimilarity, archiveOptions, isBatch = false }) {
     const localPath = await img.getPath().catch((e) => {
         console.warn(`[图片存档] getPath 失败 (file=${img.file}):`, e?.message || e);
         return undefined;
@@ -1481,7 +1503,7 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
     const backendResult = await fallbackToBackendSearch(img.url, localPath || null, context);
     if (backendResult?.matched) {
         console.log(`图片存档 - 后端搜索匹配 ${index}/${totalCount}:`, backendResult.illustObj);
-        const processResult = await processIllustObj(backendResult.illustObj, context, isFromReply, img);
+        const processResult = await processIllustObj(backendResult.illustObj, context, isFromReply, img, isBatch);
 
         // 来源不可用（作品已删除/不可访问等）→ 回退到归档队列等待重新搜索
         if (processResult?.source_unavailable) {
@@ -1495,11 +1517,13 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                 lastErrorMessage: `${backendResult.illustObj?.type} #${backendResult.illustObj?.id}: ${processResult.error}`,
             });
             if (queueResult?.success) {
-                const isAdmin = isAdminPrivateChat(context);
-                if (isAdmin) {
-                    global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，等后台重新搜源~`, false, true);
-                } else {
-                    global.replyMsg(context, '这张图的来源暂时失效，小春先排上队帮你重新找找~', false, true);
+                if (!isBatch) {
+                    const isAdmin = isAdminPrivateChat(context);
+                    if (isAdmin) {
+                        global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，等后台重新搜源~`, false, true);
+                    } else {
+                        global.replyMsg(context, '这张图的来源暂时失效，小春先排上队帮你重新找找~', false, true);
+                    }
                 }
                 return {
                     outcome: 'archived',
@@ -1527,18 +1551,25 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         return {
             outcome: 'matched',
             hasResult: processResult?.success ?? false,
-            detailedResult: { index, status: processResult?.success ? 'success' : 'api_error', type: backendResult.illustObj.type, detail: processResult?.error, snSimilarity, iqdbSimilarity },
+            detailedResult: {
+                index, status: processResult?.success ? 'success' : 'api_error',
+                type: backendResult.illustObj.type, detail: processResult?.error,
+                snSimilarity, iqdbSimilarity,
+                ...(processResult?.ssimFailed ? { ssimFailed: true, ssimScore: processResult.ssimScore, recordId: backendResult.illustObj.id } : {}),
+            },
         };
     } else if (backendResult?.already_queued) {
         // 后端队列预检：该图片已在搜索队列中
         const isAdmin = isAdminPrivateChat(context);
         const r = backendResult.result || {};
         console.log(`图片存档 - 已在搜索队列 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
-        const userMsg = buildDedupUserMessage({
-            status: 'already_queued', queueId: backendResult.queue_id,
-            retryCount: r.retry_count ?? null,
-        }, isAdmin);
-        if (userMsg) global.replyMsg(context, userMsg, false, true);
+        if (!isBatch) {
+            const userMsg = buildDedupUserMessage({
+                status: 'already_queued', queueId: backendResult.queue_id,
+                retryCount: r.retry_count ?? null,
+            }, isAdmin);
+            if (userMsg) global.replyMsg(context, userMsg, false, true);
+        }
         return {
             outcome: 'already_queued',
             hasResult: false,
@@ -1549,12 +1580,14 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         const isAdmin = isAdminPrivateChat(context);
         const r = backendResult.result || {};
         console.log(`图片存档 - 近期已搜索 ${index}/${totalCount}: source=${r.matched_source || 'none'}`);
-        const userMsg = buildDedupUserMessage({
-            status: 'recently_completed',
-            matchedSource: r.matched_source, matchedItemId: r.matched_item_id,
-            ssimScore: r.ssim_score ?? null,
-        }, isAdmin);
-        if (userMsg) global.replyMsg(context, userMsg, false, true);
+        if (!isBatch) {
+            const userMsg = buildDedupUserMessage({
+                status: 'recently_completed',
+                matchedSource: r.matched_source, matchedItemId: r.matched_item_id,
+                ssimScore: r.ssim_score ?? null,
+            }, isAdmin);
+            if (userMsg) global.replyMsg(context, userMsg, false, true);
+        }
         return {
             outcome: 'recently_completed',
             hasResult: true,
@@ -1562,10 +1595,12 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         };
     } else if (backendResult?.queued) {
         console.log(`图片存档 - 后端搜索降级为异步 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
-        if (isAdminPrivateChat(context)) {
-            global.replyMsg(context, `⏳ 搜索超时，已提交后台排队 (#${backendResult.queue_id})，有结果会告诉你~`, false, true);
-        } else {
-            global.replyMsg(context, '⏳ 搜索要花点时间，小春先排上队啦，有结果会告诉你哦~', false, true);
+        if (!isBatch) {
+            if (isAdminPrivateChat(context)) {
+                global.replyMsg(context, `⏳ 搜索超时，已提交后台排队 (#${backendResult.queue_id})，有结果会告诉你~`, false, true);
+            } else {
+                global.replyMsg(context, '⏳ 搜索要花点时间，小春先排上队啦，有结果会告诉你哦~', false, true);
+            }
         }
         return {
             outcome: 'queued',
@@ -1592,8 +1627,10 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
             // 归档队列返回去重状态时向用户反馈
             const isAdmin = isAdminPrivateChat(context);
             if (qStatus === 'duplicate') {
-                const userMsg = buildDedupUserMessage({ status: 'duplicate', queueId: queueResult.queue_id }, isAdmin);
-                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                if (!isBatch) {
+                    const userMsg = buildDedupUserMessage({ status: 'duplicate', queueId: queueResult.queue_id }, isAdmin);
+                    if (userMsg) global.replyMsg(context, userMsg, false, true);
+                }
                 return {
                     outcome: 'already_queued',
                     hasResult: false,
@@ -1601,13 +1638,15 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                 };
             }
             if (qStatus === 'recently_completed') {
-                const userMsg = buildDedupUserMessage({
-                    status: 'recently_completed',
-                    matchedSource: queueResult.matched_source,
-                    matchedItemId: queueResult.matched_item_id,
-                    ssimScore: queueResult.ssim_score ?? null,
-                }, isAdmin);
-                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                if (!isBatch) {
+                    const userMsg = buildDedupUserMessage({
+                        status: 'recently_completed',
+                        matchedSource: queueResult.matched_source,
+                        matchedItemId: queueResult.matched_item_id,
+                        ssimScore: queueResult.ssim_score ?? null,
+                    }, isAdmin);
+                    if (userMsg) global.replyMsg(context, userMsg, false, true);
+                }
                 return {
                     outcome: 'recently_completed',
                     hasResult: true,
@@ -1615,10 +1654,12 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                 };
             }
             // 正常入队
-            if (isAdmin) {
-                global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，有结果会通知你~`, false, true);
-            } else {
-                global.replyMsg(context, '📦已加入搜索队列~', false, true);
+            if (!isBatch) {
+                if (isAdmin) {
+                    global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，有结果会通知你~`, false, true);
+                } else {
+                    global.replyMsg(context, '📦已加入搜索队列~', false, true);
+                }
             }
             return {
                 outcome: 'archived',
@@ -1664,7 +1705,8 @@ export async function ArchivedImg(context, isFromReply = false) {
     let hasAnyResult = false; // 是否有任何一张图片成功入库
     const failedResults = []; // 记录所有失败图片的相似度信息
     let queuedCount = 0; // 已提交归档队列的数量
-    const detailedResults = []; // 每张图片的详细处理状态（管理员汇总用）
+    const detailedResults = []; // 每张图片的详细处理状态（汇总报告用）
+    const isBatch = imgs.length > 1; // 多图批量模式：抑制逐条通知，汇总后统一输出
 
     for (let i = 0; i < imgs.length; i++) {
         const img = imgs[i];
@@ -1699,16 +1741,20 @@ export async function ArchivedImg(context, isFromReply = false) {
             );
             // 已完成的搜索：直接提示用户
             if (dedupStatus === 'recently_completed' && dedupData.matchedSource) {
-                const userMsg = buildDedupUserMessage(dedupData, isAdmin);
-                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                if (!isBatch) {
+                    const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                    if (userMsg) global.replyMsg(context, userMsg, false, true);
+                }
                 detailedResults.push({ index: i + 1, status: 'dedup_completed', detail: `${dedupData.matchedSource}/${dedupData.matchedItemId || ''}` });
                 hasAnyResult = true;
                 continue;
             }
             // 在队列中等待搜索：提示用户并跳过
             if (dedupStatus === 'already_queued' || dedupStatus === 'queued' || dedupStatus === 'duplicate') {
-                const userMsg = buildDedupUserMessage(dedupData, isAdmin);
-                if (userMsg) global.replyMsg(context, userMsg, false, true);
+                if (!isBatch) {
+                    const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                    if (userMsg) global.replyMsg(context, userMsg, false, true);
+                }
                 queuedCount++;
                 detailedResults.push({ index: i + 1, status: 'dedup_queued', detail: `queue_id=${dedupData.queueId ?? 'none'}` });
                 continue;
@@ -1766,9 +1812,11 @@ export async function ArchivedImg(context, isFromReply = false) {
             const illustObj = matchUrlToIllust(resultUrl);
             if (illustObj) {
                 console.log(`图片存档 - 匹配到图站 ${i + 1}/${imgs.length}:`, illustObj);
-                const _r1 = await processIllustObj(illustObj, context, isFromReply, img);
+                const _r1 = await processIllustObj(illustObj, context, isFromReply, img, isBatch);
                 hasAnyResult = true;
-                detailedResults.push({ index: i + 1, status: _r1?.success ? 'success' : 'api_error', type: illustObj.type, detail: _r1?.error, snSimilarity, iqdbSimilarity });
+                const _detail = { index: i + 1, status: _r1?.success ? 'success' : 'api_error', type: illustObj.type, detail: _r1?.error, snSimilarity, iqdbSimilarity };
+                if (_r1?.ssimFailed) { _detail.ssimFailed = true; _detail.ssimScore = _r1.ssimScore; _detail.recordId = illustObj.id; }
+                detailedResults.push(_detail);
             } else {
                 // 有搜索结果URL但无法匹配到图站 → 后端搜索回退
                 const fbResult = await handleBackendFallback({
@@ -1780,6 +1828,7 @@ export async function ArchivedImg(context, isFromReply = false) {
                         lastErrorType: 'no_site_match',
                         lastErrorMessage: `搜索到结果但无法匹配图站: ${resultUrl.substring(0, 200)}`,
                     },
+                    isBatch,
                 });
                 if (fbResult.hasResult) hasAnyResult = true;
                 if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived' || fbResult.outcome === 'already_queued') queuedCount++;
@@ -1798,6 +1847,7 @@ export async function ArchivedImg(context, isFromReply = false) {
                     lastErrorType: 'no_result',
                     lastErrorMessage: 'SauceNAO 和 IQDB 均未找到匹配结果',
                 },
+                isBatch,
             });
             if (fbResult.hasResult) hasAnyResult = true;
             if (fbResult.outcome === 'queued' || fbResult.outcome === 'archived' || fbResult.outcome === 'already_queued') queuedCount++;
@@ -1853,11 +1903,12 @@ function matchUrlToIllust(resultUrl) {
 }
 
 // 处理单个作品入库
-async function processIllustObj(illustObj, context, shouldReply = true, sourceImg = null) {
-    // 返回值: { success: boolean, type: string, error?: string } 或 false（未知类型兜底）
+async function processIllustObj(illustObj, context, shouldReply = true, sourceImg = null, isBatch = false) {
+    // 返回值: { success: boolean, type: string, error?: string, ssimFailed?: boolean, ssimScore?: number } 或 false（未知类型兜底）
     // 对象是 truthy，与原 return true 对插件框架兼容；return false 保持不变
     if (illustObj.type === 'pixiv') {
         let _processStatus = { success: true, type: 'pixiv' };
+        let _ssimPromise = null;
         try {
             const result = await illustAddPixiv(illustObj.id, context);
             if (result.error) {
@@ -1866,7 +1917,7 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             } else {
                 // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
                 const pixivSourceUrl = result.meta_single_page || result.meta_large || null;
-                submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context, pixivSourceUrl);
+                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context, pixivSourceUrl, isBatch);
                 // 构建合并消息（参考Danbooru的实现方式）
                 const texts = [];
                 texts.push(`${result.message}:${result.author}<${result.title}>\n${result.caption}`);
@@ -1926,9 +1977,18 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             }
             _processStatus = { success: false, type: 'pixiv', error: errMsg, source_unavailable: isSourceUnavailable };
         }
+        // 批量模式：等待 SSIM 检查完成并收集结果
+        if (isBatch && _ssimPromise) {
+            const ssimResult = await _ssimPromise;
+            if (ssimResult && !ssimResult.ssimPassed) {
+                _processStatus.ssimFailed = true;
+                _processStatus.ssimScore = ssimResult.ssimScore;
+            }
+        }
         return _processStatus;
     } else if (illustObj.type === 'danbooru') {
         let _processStatus = { success: true, type: 'danbooru' };
+        let _ssimPromise = null;
         try {
             const result = await illustAddDanbooru(illustObj.id, context);
             if (result.error) {
@@ -1937,7 +1997,7 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             } else {
                 // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
                 const danbooruSourceUrl = result.file_url || result.large_file_url || null;
-                submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl);
+                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl, isBatch);
                 const texts = [];
                 if (result.pixiv_id) {
                     texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
@@ -1998,6 +2058,14 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                 handleApiError(error, context, "投稿");
             }
             _processStatus = { success: false, type: 'danbooru', error: errMsg, source_unavailable: isSourceUnavailable };
+        }
+        // 批量模式：等待 SSIM 检查完成并收集结果
+        if (isBatch && _ssimPromise) {
+            const ssimResult = await _ssimPromise;
+            if (ssimResult && !ssimResult.ssimPassed) {
+                _processStatus.ssimFailed = true;
+                _processStatus.ssimScore = ssimResult.ssimScore;
+            }
         }
         return _processStatus;
     } else if (illustObj.type === 'ehentai') {
