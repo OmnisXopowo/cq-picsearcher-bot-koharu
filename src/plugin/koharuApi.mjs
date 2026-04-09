@@ -296,7 +296,7 @@ export async function getContextFromUrl(context) {
                 }
                 const imgs = getImgs(getRawMessage(data));
                 const rMsg = imgs
-                    .map(({ file, url }) => `[CQ:image,file=${CQ.escape(file, true)},url=${CQ.escape(url, true)}]`)
+                    .map(img => `[CQ:image,file=${CQ.escape(img.file, true)},url=${CQ.escape(img.rawUrl || img.url, true)}]`)
                     .join('');
                 context = { ...context, message: context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, rMsg) };
                 isFromReply = true; // 标记来自引用
