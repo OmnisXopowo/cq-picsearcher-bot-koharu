@@ -7,7 +7,7 @@ import { CooldownManager } from '../utils/CooldownManager.mjs';
 import CQ from '../utils/CQcode.mjs';
 import dailyCountInstance from '../utils/dailyCount.mjs';
 import { getGroupName } from '../utils/groupInfoCache.mjs';
-import { checkImageHWRatio, getUniversalImgURL } from '../utils/image.mjs';
+import { getUniversalImgURL } from '../utils/image.mjs';
 import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
 import logError from '../utils/logError.mjs';
 import { getRawMessage } from '../utils/message.mjs';
@@ -629,6 +629,7 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
 
         const payload = {
             image_url: img.url,
+            original_url: img.rawUrl || undefined,
             source_site: 'qq_cdn',
             image_local_path: localPath || null,
             linked_record_type: linkedRecordType,
@@ -1721,10 +1722,10 @@ export async function ArchivedImg(context, isFromReply = false) {
         
         console.log(`图片存档 - 开始收藏 ${i + 1}/${imgs.length}:`, img.url);
 
-        // 检查图片比例
+        // 检查图片比例（使用实例方法，优先用 rawUrl 下载图片检测尺寸）
         if (
             global.config.bot.stopSearchingHWRatioGt > 0 &&
-            !(await checkImageHWRatio(img.url, global.config.bot.stopSearchingHWRatioGt))
+            !(await img.checkImageHWRatio(global.config.bot.stopSearchingHWRatioGt))
         ) {
             console.log('图片存档 - 图片比例不符合要求，跳过');
             detailedResults.push({ index: i + 1, status: 'skipped', detail: '图片比例不符合' });
@@ -2979,7 +2980,7 @@ export async function breastReduction(context) {
             if (data) {
                 const imgs = getImgs(getRawMessage(data));
                 if (imgs.length === 1) {
-                    imageUrl = imgs[0].url;
+                    imageUrl = imgs[0].rawUrl || imgs[0].url;
                 } else if (imgs.length > 1) {
                     global.replyMsg(context, '只支持单张图片的咪咪缩小术，请回复只有一张图片的消息', false, true);
                     return true;
@@ -2991,7 +2992,7 @@ export async function breastReduction(context) {
         if (!imageUrl) {
             const inlineImgs = getImgs(context.message);
             if (inlineImgs.length === 1) {
-                imageUrl = inlineImgs[0].url;
+                imageUrl = inlineImgs[0].rawUrl || inlineImgs[0].url;
             } else if (inlineImgs.length > 1) {
                 global.replyMsg(context, '只支持单张图片的咪咪缩小术哦～', false, true);
                 return true;
