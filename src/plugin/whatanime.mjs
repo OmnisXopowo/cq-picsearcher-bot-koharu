@@ -131,7 +131,7 @@ async function getSearchResult(host, key, img) {
     if (img.isUrlValid) {
       return await Axios.get(`${host}/search`, {
         params: {
-          url: img.url,
+          url: img.rawUrl || img.url,
           key,
         },
         validateStatus: () => true,

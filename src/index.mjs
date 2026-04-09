@@ -948,7 +948,7 @@ async function searchImg(context, customDB = -1) {
 
     // iqdb
     if (useIqdb) {
-      const { ReturnMsg, success: iqdbSuc, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
+      const { ReturnMsg, success: iqdbSuc, asErr } = await IqDB(img.rawUrl || img.url).catch(asErr => ({ asErr }));
       if (asErr) {
         
         success = false;

@@ -260,7 +260,9 @@ export class MsgImage {
   constructor(cq) {
     this.cq = cq;
     this.file = cq.data.get('file');
-    this.url = getUniversalImgURL(cq.data.get('url') || this.file);
+    /** @type {string} 原始完整 URL（含 rkey 等 CDN 鉴权参数，用于实际下载/搜索） */
+    this.rawUrl = cq.data.get('url') || this.file;
+    this.url = getUniversalImgURL(this.rawUrl);
     /** @type {string|undefined} */
     this.path = undefined;
     this.key = cq.data.get('file_unique') || this.file;
@@ -287,7 +289,7 @@ export class MsgImage {
   async getImageSize() {
     const path = await this.getPath();
     if (path) return imageSize(path);
-    if (this.isUrlValid) return await imageSizeAsync(this.url);
+    if (this.isUrlValid) return await imageSizeAsync(this.rawUrl || this.url);
     throw new Error(`[MsgImage] invalid image ${this.url}`);
   }
 
@@ -313,7 +315,7 @@ export class MsgImage {
     if (path) return safeJimpRead(path);
     if (this.isUrlValid) {
       const arrayBuffer = await retryAsync(
-        () => Axios.get(this.url, { responseType: 'arraybuffer' }).then(r => r.data),
+        () => Axios.get(this.rawUrl || this.url, { responseType: 'arraybuffer' }).then(r => r.data),
         3,
         e => e.code === 'ECONNRESET',
       );

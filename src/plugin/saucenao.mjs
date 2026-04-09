@@ -344,7 +344,7 @@ async function getSearchResult(host, api_key, img, db = 999) {
 
   // ========== 分支 B：URL 模式（完整 4 层降级链） ==========
   if (img.isUrlValid) {
-    const fullParams = { ...params, url: img.url };
+    const fullParams = { ...params, url: img.rawUrl || img.url };
 
     // --- Layer 1+2: Axios searchGet（多代理轮询 → 直连） ---
     try {

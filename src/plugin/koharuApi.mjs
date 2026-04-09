@@ -490,6 +490,7 @@ async function submitToArchiveQueue(img, context, options = {}) {
         const normalizedUrl = getUniversalImgURL(img.url);
         const payload = {
             image_url: normalizedUrl,
+            original_url: img.rawUrl || undefined,
             source_site: 'qq_cdn',
             image_local_path: localPath || null,
             search_results_json: searchResults,
@@ -535,7 +536,7 @@ async function submitToArchiveQueue(img, context, options = {}) {
                     }
                     base64Data = readFileSync(imgPath).toString('base64');
                 } else if (img.isUrlValid) {
-                    const dlResp = await axios.get(img.url, { responseType: 'arraybuffer', timeout: 30000 });
+                    const dlResp = await axios.get(img.rawUrl || img.url, { responseType: 'arraybuffer', timeout: 30000 });
                     if (dlResp.data.byteLength > MAX_BASE64_FILE_SIZE) {
                         console.warn(`图片归档 - 下载文件过大，跳过 base64 重试: ${dlResp.data.byteLength} bytes`);
                         return result;
@@ -752,6 +753,7 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
     try {
         const response = await koharuAxios.post('/api/image-search/search', {
             image_url: getUniversalImgURL(imageUrl),
+            original_url: imageUrl,
             original_image_path: localPath || undefined,
             qq_id: context?.user_id,
             group_id: context?.group_id ?? 0,
@@ -1500,7 +1502,7 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         `iqdb=${iqdbSimilarity != null ? Math.round(iqdbSimilarity) : 'none'}` +
         (archiveOptions.searchResults?.resultUrl ? ` source=${summarizeLogValue(archiveOptions.searchResults.resultUrl, 88)}` : '')
     );
-    const backendResult = await fallbackToBackendSearch(img.url, localPath || null, context);
+    const backendResult = await fallbackToBackendSearch(img.rawUrl || img.url, localPath || null, context);
     if (backendResult?.matched) {
         console.log(`图片存档 - 后端搜索匹配 ${index}/${totalCount}:`, backendResult.illustObj);
         const processResult = await processIllustObj(backendResult.illustObj, context, isFromReply, img, isBatch);
@@ -1784,7 +1786,7 @@ export async function ArchivedImg(context, isFromReply = false) {
 
         // iqdb
         if (useIqdb) {
-            const { ReturnMsg, success: iqdbSuc, isLowAcc, similarity: iqdbSim, asErr } = await IqDB(img.url).catch(asErr => ({ asErr }));
+            const { ReturnMsg, success: iqdbSuc, isLowAcc, similarity: iqdbSim, asErr } = await IqDB(img.rawUrl || img.url).catch(asErr => ({ asErr }));
             if (asErr) {
                 console.error('图片存档 - IQDB 错误:', asErr);
                 logError(asErr);

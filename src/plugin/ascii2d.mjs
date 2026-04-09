@@ -64,12 +64,12 @@ function throwDeviceImageError() {
 async function callAscii2dApi(host, img) {
   if (global.config.flaresolverr.enableForAscii2d) {
     if (!img.isUrlValid) throwDeviceImageError();
-    return flareSolverr.get(`${host}/search/url/${img.url}`);
+    return flareSolverr.get(`${host}/search/url/${img.rawUrl || img.url}`);
   }
 
   if (global.config.bot.ascii2dUsePuppeteer) {
     if (!img.isUrlValid) throwDeviceImageError();
-    return getAscii2dWithPuppeteer(`${host}/search/url/${img.url}`);
+    return getAscii2dWithPuppeteer(`${host}/search/url/${img.rawUrl || img.url}`);
   }
 
   if (global.config.bot.ascii2dLocalUpload || !img.isUrlValid) {
@@ -82,7 +82,7 @@ async function callAscii2dApi(host, img) {
   }
 
   if (img.isUrlValid) {
-    return Axios.get(`${host}/search/url/${img.url}`);
+    return Axios.get(`${host}/search/url/${img.rawUrl || img.url}`);
   }
 
   throwDeviceImageError();

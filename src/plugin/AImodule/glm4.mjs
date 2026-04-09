@@ -332,7 +332,7 @@ const callGML4VAPI = (prompt, config, context, imgUrls) => {
         {
           type: "image_url",
           image_url: {
-            url: imgUrls[0].url
+            url: imgUrls[0].rawUrl || imgUrls[0].url
           }
         }
       ]
@@ -423,7 +423,7 @@ const callQwenVLAPI = (prompt, config, context, imgUrls) => {
           {
             type: "image_url",
             image_url: {
-              url: imgUrls[0].url
+              url: imgUrls[0].rawUrl || imgUrls[0].url
             }
           },
           {
@@ -530,7 +530,7 @@ async function doxingORC(context) {
   }
   let ret;
   try {
-    ret = await Axios.get(imgs[0].url);
+    ret = await Axios.get(imgs[0].rawUrl || imgs[0].url);
   } catch (error) {
     logError(error);
     return false;
