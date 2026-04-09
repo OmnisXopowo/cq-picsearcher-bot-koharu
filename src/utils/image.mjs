@@ -240,12 +240,18 @@ export const getUniversalImgURL = (url = '') => {
       .replace(/\?.*$/, '');
   }
   // NTQQ (Lagrange) multimedia 下载格式: multimedia.nt.qq.com(.cn)/download?fileid=XXX&rkey=YYY
-  // fileid 是图片唯一标识符，必须保留；rkey/spec/appid 是动态参数，需剥离
+  // fileid 是 protobuf base64 编码，包含：稳定图片 UUID（字段2-3）+ 动态 session 数据（字段4+）
+  // 'g_goo' 标记稳定字段与动态字段的 base64 编码分界，需剥离动态部分以确保去重一致性
   if (/^https?:\/\/multimedia\.nt\.qq\.com(?:\.cn)?\/download\b/.test(url)) {
     try {
       const u = new URL(url);
-      const fileid = u.searchParams.get('fileid');
+      let fileid = u.searchParams.get('fileid');
       if (fileid) {
+        // 剥离动态 session 后缀（protobuf 字段 4+ 的鉴权/时间戳数据）
+        const gooIdx = fileid.indexOf('g_goo');
+        if (gooIdx >= 20) {
+          fileid = fileid.substring(0, gooIdx);
+        }
         return `https://${u.hostname}/download?fileid=${fileid}`;
       }
     } catch { /* malformed URL, return as-is */ }
