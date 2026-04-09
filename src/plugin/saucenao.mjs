@@ -212,7 +212,24 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
           if (retMsg.startsWith('Specified file no longer exists on the remote server')) {
             msg = '该图片已过期，请尝试二次截图后发送';
           } else if (retMsg.startsWith('Problem with remote server')) {
-            msg = `saucenao-${hostIndex} 远程服务器出现问题，请稍后尝试重试`;
+            // 解析远程服务器错误详情: "Problem with remote server... (400 - https://...)"
+            const detailMatch = retMsg.match(/\((\d+)\s*-\s*(https?:\/\/[^\s)]+)/);
+            if (detailMatch) {
+              const httpCode = detailMatch[1];
+              const failedUrl = detailMatch[2];
+              // 判断是图片 URL 不可达还是 SauceNAO 自身问题
+              const isImageUrlIssue = failedUrl.includes('qq.com') || failedUrl.includes('qpic.cn')
+                || failedUrl.includes('gchat.') || failedUrl.includes('multimedia.');
+              if (isImageUrlIssue) {
+                console.warn(`[saucenao] 远程服务器无法访问图片 URL (HTTP ${httpCode}): ${failedUrl.slice(0, 80)}...`);
+                msg = `saucenao-${hostIndex} SauceNAO 无法访问图片链接 (HTTP ${httpCode})，QQ 图片链接可能已过期或不可公网访问`;
+              } else {
+                console.warn(`[saucenao] 远程目标服务器异常 (HTTP ${httpCode}): ${failedUrl.slice(0, 80)}...`);
+                msg = `saucenao-${hostIndex} 远程服务器异常 (HTTP ${httpCode}: ${new URL(failedUrl).hostname})`;
+              }
+            } else {
+              msg = `saucenao-${hostIndex} 远程服务器出现问题，请稍后尝试重试`;
+            }
           } else {
             logError(data);
             msg = `saucenao-${hostIndex} ${CQ.escape(retMsg)}`;
