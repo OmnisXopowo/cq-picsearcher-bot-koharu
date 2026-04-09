@@ -231,12 +231,24 @@ export const checkImageHWRatio = async (url, max) => {
 };
 
 export const getUniversalImgURL = (url = '') => {
+  // 旧版 QQ CDN 格式: gchat.qpic.cn / c2cpicdw.qpic.cn
   if (/^https?:\/\/(c2cpicdw|gchat)\.qpic\.cn\/(offpic|gchatpic)_new\//.test(url)) {
     return url
       .replace('/c2cpicdw.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
       .replace('/gchat.qpic.cn/offpic_new/', '/gchat.qpic.cn/gchatpic_new/')
       .replace(/\/\d+\/+\d+-\d+-/, '/0/0-0-')
       .replace(/\?.*$/, '');
+  }
+  // NTQQ (Lagrange) multimedia 下载格式: multimedia.nt.qq.com(.cn)/download?fileid=XXX&rkey=YYY
+  // fileid 是图片唯一标识符，必须保留；rkey/spec/appid 是动态参数，需剥离
+  if (/^https?:\/\/multimedia\.nt\.qq\.com(?:\.cn)?\/download\b/.test(url)) {
+    try {
+      const u = new URL(url);
+      const fileid = u.searchParams.get('fileid');
+      if (fileid) {
+        return `https://${u.hostname}/download?fileid=${fileid}`;
+      }
+    } catch { /* malformed URL, return as-is */ }
   }
   return url;
 };
