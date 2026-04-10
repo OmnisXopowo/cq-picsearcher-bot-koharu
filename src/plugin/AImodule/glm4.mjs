@@ -54,7 +54,7 @@ const getMatchAndConfig = async context => {
           }
           const imgs = getImgs(data.message);
           const rMsg = imgs
-            .map(img => `[CQ:image,file=${CQ.escape(img.file, true)},url=${CQ.escape(img.rawUrl || img.url, true)}]`)
+            .map(({ file, url }) => `[CQ:image,file=${CQ.escape(file, true)},url=${CQ.escape(url, true)}]`)
             .join('');
           originalContext = { ...context, message: context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, rMsg) };
         } else {

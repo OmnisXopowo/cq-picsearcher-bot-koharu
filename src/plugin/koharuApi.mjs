@@ -296,7 +296,7 @@ export async function getContextFromUrl(context) {
                 }
                 const imgs = getImgs(getRawMessage(data));
                 const rMsg = imgs
-                    .map(img => `[CQ:image,file=${CQ.escape(img.file, true)},url=${CQ.escape(img.rawUrl || img.url, true)}]`)
+                    .map(({ file, url }) => `[CQ:image,file=${CQ.escape(file, true)},url=${CQ.escape(url, true)}]`)
                     .join('');
                 context = { ...context, message: context.message.replace(/^\[CQ:reply,id=-?\d+.*?\]/, rMsg) };
                 isFromReply = true; // 标记来自引用
@@ -451,37 +451,13 @@ async function illustAddPixiv(illustId, context) {
     return response.data;
 }
 
-async function illustAddDanbooru(illustId, context, fallbackImageCacheKey = null) {
+async function illustAddDanbooru(illustId, context) {
     const apiContext = await getApiContext(context);
-    const payload = {
+    const response = await koharuAxios.post('/api/danbooru/add', {
         illust: illustId,
         ...apiContext
-    };
-    if (fallbackImageCacheKey) {
-        payload.fallback_image_cache_key = fallbackImageCacheKey;
-    }
-    const response = await koharuAxios.post('/api/danbooru/add', payload);
+    });
     return response.data;
-}
-
-
-/**
- * 获取 QQ 原图的缓存键（用于 Danbooru 回退时作为回退图片引用）
- * 这里复用 image_archive_queue 的缓存键格式
- * @param {MsgImage} img - 图片对象
- * @param {string|null} localPath - 图片本地路径
- * @returns {Promise<string|null>} 缓存键，格式如 qq_cdn:xxxxxxxx:yyyyyyyy
- */
-async function getImageCacheKey(img, localPath) {
-    try {
-        const { createHash } = await import('crypto');
-        const normalizedUrl = getUniversalImgURL(img.rawUrl || img.url);
-        const urlHash = createHash('sha256').update(normalizedUrl).digest('hex');
-        return `qq_cdn:${urlHash.substring(0, 8)}:${urlHash.substring(8, 16)}`;
-    } catch (e) {
-        console.warn('[getImageCacheKey] 生成缓存键失败:', e?.message || e);
-        return null;
-    }
 }
 
 
@@ -681,14 +657,6 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             if (!suppressMessage) {
                 global.replyMsg(context, `⚠️ ${type} #${linkedRecordId} 图片比对未通过${ssimInfo}，已提交复审`, false, true);
             }
-
-            // 管理员私聊时发送对比图片用于人工复核
-            if (isAdminPrivateChat(context)) {
-                _sendSsimReviewImages(context, result, type, linkedRecordId).catch(e => {
-                    console.warn('[图片缓存] 发送 SSIM 复核图片失败:', e.message || e);
-                });
-            }
-
             return { ssimPassed: false, ssimScore: result.ssim_score, type, recordId: linkedRecordId };
         }
         return null;
@@ -702,54 +670,6 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
         );
         return null;
     }
-}
-
-/**
- * 向管理员发送 SSIM 复核对比图片（仅管理员私聊场景）
- * 从 Flask 获取原始图和候选图的缓存 URL，下载后发送对比消息
- * @param {object} context 消息上下文
- * @param {object} submitResult submitImageCacheAfterAdd 的返回结果
- * @param {string} type 来源类型 (pixiv/danbooru)
- * @param {number|string} recordId 关联记录 ID
- */
-async function _sendSsimReviewImages(context, submitResult, type, recordId) {
-    const originalKey = submitResult.cache_key;
-    const sourceKey = submitResult.source_cache_key;
-    if (!originalKey && !sourceKey) return;
-
-    const ssimInfo = submitResult.ssim_score != null 
-        ? `SSIM ${(submitResult.ssim_score * 100).toFixed(1)}%` 
-        : 'SSIM N/A';
-
-    const lines = [`🔍 SSIM 复核: ${type} #${recordId} — ${ssimInfo}`];
-    const imgParts = [];
-
-    // 尝试获取原始图
-    if (originalKey) {
-        try {
-            const imgUrl = `${koharuApiBaseUrl}/api/image-cache/serve/${originalKey}`;
-            imgParts.push(`[原图] ${CQ.img(imgUrl)}`);
-        } catch (e) {
-            console.warn('[SSIM复核] 原始图获取失败:', e.message);
-        }
-    }
-
-    // 尝试获取候选图
-    if (sourceKey) {
-        try {
-            const imgUrl = `${koharuApiBaseUrl}/api/image-cache/serve/${sourceKey}`;
-            imgParts.push(`[候选] ${CQ.img(imgUrl)}`);
-        } catch (e) {
-            console.warn('[SSIM复核] 候选图获取失败:', e.message);
-        }
-    }
-
-    if (imgParts.length > 0) {
-        lines.push(...imgParts);
-    }
-    lines.push(`💡 如确认匹配，可到管理面板手动通过复核`);
-
-    global.replyMsg(context, lines.join('\n'), false, true);
 }
 
 
@@ -838,7 +758,6 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
             original_image_path: localPath || undefined,
             qq_id: context?.user_id,
             group_id: context?.group_id ?? 0,
-            sync_mode: true,
         });
 
         const result = unwrapKoharuApiPayload(response, '/api/image-search/search');
@@ -885,24 +804,11 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
         if (result?.title && result.title !== 'No results found') {
             const sourceUrl = result.source_url || '';
             const illustObj = matchUrlToIllust(sourceUrl);
-            const similarity = result.similarity ?? 0;
-            const isLowSimilarity = result.status === 'matched_low_similarity' || similarity < (global.config.bot?.saucenaoLowAcc || 60);
-            const candidates = result.candidates || [];
-
-            if (isLowSimilarity) {
-                // 低相似度：不直接入库，将候选信息返回给调用方决策
-                console.log(
-                    `[图片回退] Flask 低相似度候选(不入库): similarity=${similarity.toFixed(1)}% ` +
-                    `source=${summarizeLogValue(sourceUrl, 88)} candidates=${candidates.length}`
-                );
-                return { matched_low_similarity: true, illustObj, result, candidates, similarity };
-            }
-
             if (illustObj) {
-                return { matched: true, illustObj, result, candidates };
+                return { matched: true, illustObj, result };
             }
             console.warn(`[图片回退] Flask 命中结果但无法映射图站: source=${summarizeLogValue(sourceUrl, 88)}`);
-            return { empty: true, reason: 'unmatched_source_url', result, candidates };
+            return { empty: true, reason: 'unmatched_source_url', result };
         }
         const reason = result?.message || 'no_result';
         console.log(`[图片回退] Flask 搜索未命中: reason=${summarizeLogValue(reason, 72)}`);
@@ -1598,100 +1504,12 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         (archiveOptions.searchResults?.resultUrl ? ` source=${summarizeLogValue(archiveOptions.searchResults.resultUrl, 88)}` : '')
     );
     const backendResult = await fallbackToBackendSearch(img.rawUrl || img.url, localPath || null, context);
-
-    // ── 低相似度候选：不直接入库，提交归档队列后台继续搜索 ──
-    if (backendResult?.matched_low_similarity) {
-        const sim = backendResult.similarity ?? 0;
-        const candidates = backendResult.candidates || [];
-        console.log(
-            `图片存档 - 低相似度不入库 ${index}/${totalCount}: similarity=${sim.toFixed(1)}% candidates=${candidates.length}`
-        );
-        const queueResult = await submitToArchiveQueue(img, context, {
-            searchResults: {
-                ...archiveOptions.searchResults,
-                flaskSimilarity: sim,
-                flaskCandidates: candidates,
-            },
-            lastErrorType: 'low_similarity',
-            lastErrorMessage: `Flask 低相似度候选 ${sim.toFixed(1)}%，不自动入库`,
-        });
-        if (queueResult?.success) {
-            if (!isBatch) {
-                const isAdmin = isAdminPrivateChat(context);
-                if (isAdmin) {
-                    const candidatesSummary = candidates.slice(0, 3).map(c =>
-                        `${c.engine}:${c.similarity?.toFixed(0)}%/${c.source}`
-                    ).join(', ');
-                    global.replyMsg(context, `📦低相似度(${sim.toFixed(0)}%)，已排队后台搜索 (#${queueResult.queue_id ?? '?'})${candidatesSummary ? `\n候选: ${candidatesSummary}` : ''}`, false, true);
-                }
-                // 群聊：不提示，静默排队
-            }
-            return {
-                outcome: 'archived',
-                hasResult: false,
-                failedResult: { index, snSimilarity, iqdbSimilarity },
-                detailedResult: { index, status: 'low_similarity_archived', detail: `sim=${sim.toFixed(1)}%`, snSimilarity, iqdbSimilarity },
-            };
-        }
-        return {
-            outcome: 'archive_failed',
-            hasResult: false,
-            failedResult: { index, snSimilarity, iqdbSimilarity },
-            detailedResult: { index, status: 'low_similarity_archive_failed', snSimilarity, iqdbSimilarity },
-        };
-    }
-
-    // ── 高相似度匹配 ──
     if (backendResult?.matched) {
         console.log(`图片存档 - 后端搜索匹配 ${index}/${totalCount}:`, backendResult.illustObj);
         const processResult = await processIllustObj(backendResult.illustObj, context, isFromReply, img, isBatch);
 
-        // 来源不可用（作品已删除/不可访问等）→ 尝试从候选中查找 Danbooru 回退
+        // 来源不可用（作品已删除/不可访问等）→ 回退到归档队列等待重新搜索
         if (processResult?.source_unavailable) {
-            const candidates = backendResult.candidates || [];
-            // 从候选列表中查找 Danbooru 来源（优先使用 Danbooru 记录保存 tag 信息）
-            const danbooruCandidate = candidates.find(c => c.source === 'danbooru' && c.source_url);
-            let danbooruFallbackObj = null;
-            if (danbooruCandidate) {
-                danbooruFallbackObj = matchUrlToIllust(danbooruCandidate.source_url);
-            }
-
-            if (danbooruFallbackObj && danbooruFallbackObj.type === 'danbooru') {
-                console.log(
-                    `[图片存档] Pixiv 不可用，回退 Danbooru 候选: index=${index}/${totalCount} ` +
-                    `pixiv_id=${backendResult.illustObj?.id} danbooru_id=${danbooruFallbackObj.id} ` +
-                    `sim=${danbooruCandidate.similarity?.toFixed(1)}%`
-                );
-                // 获取 QQ 原图缓存键（用于 Danbooru 入库时作为回退图片）
-                const fallbackCacheKey = await getImageCacheKey(img, localPath);
-                const dbResult = await processIllustObj(
-                    danbooruFallbackObj, context, isFromReply, img, isBatch,
-                    { fallbackImageCacheKey: fallbackCacheKey }
-                );
-                if (dbResult?.success) {
-                    await setSearchDedupCache(getUniversalImgURL(img.url), {
-                        status: 'recently_completed',
-                        matchedSource: 'danbooru',
-                        matchedItemId: String(danbooruFallbackObj.id),
-                    });
-                    return {
-                        outcome: 'matched',
-                        hasResult: true,
-                        detailedResult: {
-                            index, status: 'danbooru_fallback_success', type: 'danbooru',
-                            detail: `pixiv#${backendResult.illustObj?.id}→danbooru#${danbooruFallbackObj.id}`,
-                            snSimilarity, iqdbSimilarity,
-                            ...(dbResult?.ssimFailed ? { ssimFailed: true, ssimScore: dbResult.ssimScore, recordId: danbooruFallbackObj.id } : {}),
-                        },
-                    };
-                }
-                // Danbooru 回退也失败了，继续进归档队列
-                console.warn(
-                    `[图片存档] Danbooru 回退也失败: danbooru_id=${danbooruFallbackObj.id} error=${dbResult?.error}`
-                );
-            }
-
-            // 无 Danbooru 候选或 Danbooru 也失败 → 归档队列等待重试
             console.log(
                 `[图片存档] 来源不可用，回退归档队列: index=${index}/${totalCount} ` +
                 `type=${backendResult.illustObj?.type} id=${backendResult.illustObj?.id} error=${processResult.error}`
@@ -2088,10 +1906,9 @@ function matchUrlToIllust(resultUrl) {
 }
 
 // 处理单个作品入库
-async function processIllustObj(illustObj, context, shouldReply = true, sourceImg = null, isBatch = false, options = {}) {
+async function processIllustObj(illustObj, context, shouldReply = true, sourceImg = null, isBatch = false) {
     // 返回值: { success: boolean, type: string, error?: string, ssimFailed?: boolean, ssimScore?: number } 或 false（未知类型兜底）
     // 对象是 truthy，与原 return true 对插件框架兼容；return false 保持不变
-    const { fallbackImageCacheKey = null } = options;
     if (illustObj.type === 'pixiv') {
         let _processStatus = { success: true, type: 'pixiv' };
         let _ssimPromise = null;
@@ -2176,26 +1993,16 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
         let _processStatus = { success: true, type: 'danbooru' };
         let _ssimPromise = null;
         try {
-            const result = await illustAddDanbooru(illustObj.id, context, fallbackImageCacheKey);
+            const result = await illustAddDanbooru(illustObj.id, context);
             if (result.error) {
                 global.replyMsg(context, result.error, false, true);
                 _processStatus = { success: false, type: 'danbooru', error: result.error };
             } else {
                 // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
                 const danbooruSourceUrl = result.file_url || result.large_file_url || null;
-                // 如果 Pixiv 来源无效且有回退缓存键，使用 QQ 原图作为缓存（确保后续搜索能返回图片）
-                if (result.pixiv_source_invalid && fallbackImageCacheKey) {
-                    console.log(`[投稿] Danbooru #${illustObj.id} Pixiv 来源无效，使用 QQ 原图缓存: key=${fallbackImageCacheKey}`);
-                }
                 _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl, isBatch);
                 const texts = [];
-
-                // Pixiv 来源无效提示（仅管理员私聊）
-                if (result.pixiv_source_invalid && isAdminPrivateChat(context)) {
-                    texts.push(`⚠️ Pixiv 来源无效 (pixiv_id=${result.pixiv_id})`);
-                }
-
-                if (result.pixiv_id && !result.pixiv_source_invalid) {
+                if (result.pixiv_id) {
                     texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
                 } else {
                     texts.push(`${result.message}\n来源：${result.source}`);

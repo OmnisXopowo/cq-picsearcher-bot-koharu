@@ -349,30 +349,7 @@ async function getSearchResult(host, api_key, img, db = 999) {
     // --- Layer 1+2: Axios searchGet（多代理轮询 → 直连） ---
     try {
       console.log(`[saucenao] Layer 1+2: Axios searchGet (key=${maskedKey})`);
-      const response = await Axios.searchGet(url, { params: fullParams });
-
-      // QQ CDN URL 公网不可达时，自动回退本地上传
-      const headerMsg = response?.data?.header?.message;
-      if (headerMsg && headerMsg.startsWith('Problem with remote server')) {
-        const imageUrl = fullParams.url || '';
-        const isQQCdn = /(?:multimedia\.nt\.qq\.com|qpic\.cn|gchat\.)/.test(imageUrl);
-        if (isQQCdn) {
-          console.log('[saucenao] QQ CDN URL 不可达，尝试本地上传回退...');
-          const path = await img.getPath().catch(() => null);
-          if (path) {
-            const form = new FormData();
-            form.append('file', readFileSync(path), 'image');
-            console.log(`[saucenao] ✓ 本地上传回退 (key=${maskedKey})`);
-            return Axios.searchPost(url, form, {
-              params,
-              headers: form.getHeaders(),
-            });
-          }
-          console.warn('[saucenao] 本地上传回退失败：无法获取本地文件路径');
-        }
-      }
-
-      return response;
+      return await Axios.searchGet(url, { params: fullParams });
     } catch (axiosErr) {
       const errMsg = axiosErr?.message || String(axiosErr);
       const status = axiosErr?.response?.status;
