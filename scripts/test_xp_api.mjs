@@ -10,7 +10,7 @@
 import https from 'https';
 
 // ============ 配置 ============
-const apiKey = '75625aaf77abfdd2b74d5b284e4de142.1SpPb6BuBOkq2Lo0';
+const apiKey = 'cad0b753081d475b80777d34e040012b.13Re8oKK7Xf3EnY8';
 
 // xp医生配置
 const xpDoctorConfig = {
