@@ -241,16 +241,19 @@ export const getUniversalImgURL = (url = '') => {
   }
   // NTQQ (Lagrange) multimedia 下载格式: multimedia.nt.qq.com(.cn)/download?fileid=XXX&rkey=YYY
   // fileid 是 protobuf base64 编码，包含：稳定图片 UUID（字段2-3）+ 动态 session 数据（字段4+）
-  // 'g_goo' 标记稳定字段与动态字段的 base64 编码分界，需剥离动态部分以确保去重一致性
+  // 稳定/动态字段的 base64 编码分界因 protobuf 字节对齐不同而产生多种变体：
+  //   - 'g_goo' — 最常见的分界标记
+  //   - 'ggg_woo' / 'g_woo' — 另一种对齐方式产生的变体
+  // 使用正则匹配确保覆盖所有已知变体
   if (/^https?:\/\/multimedia\.nt\.qq\.com(?:\.cn)?\/download\b/.test(url)) {
     try {
       const u = new URL(url);
       let fileid = u.searchParams.get('fileid');
       if (fileid) {
         // 剥离动态 session 后缀（protobuf 字段 4+ 的鉴权/时间戳数据）
-        const gooIdx = fileid.indexOf('g_goo');
-        if (gooIdx >= 20) {
-          fileid = fileid.substring(0, gooIdx);
+        const gooMatch = fileid.match(/g{1,4}_[gw]oo/);
+        if (gooMatch && gooMatch.index >= 20) {
+          fileid = fileid.substring(0, gooMatch.index);
         }
         return `https://${u.hostname}/download?fileid=${fileid}`;
       }

@@ -108,16 +108,16 @@ function buildDedupUserMessage(cached, isAdmin = false) {
         if (isAdmin) {
             const source = cached.matchedSource || '未知';
             const itemId = cached.matchedItemId || '';
-            const ssim = cached.ssimScore != null ? ` (SSIM ${(cached.ssimScore * 100).toFixed(1)}%)` : '';
-            return `📋 这张图之前搜到过啦~\n来源: ${source}${itemId ? '/' + itemId : ''}${ssim}`;
+            const ssim = cached.ssimScore != null ? ` SSIM:${(cached.ssimScore * 100).toFixed(1)}%` : '';
+            return `🔧 已有收录: ${source}${itemId ? '/' + itemId : ''}${ssim}`;
         }
-        return '📋该图已完成入库，感谢收藏~';
+        return '✨ 感谢投稿~这张图已收录到文库啦';
     }
     if (status === 'already_queued' || status === 'queued' || status === 'duplicate') {
         if (isAdmin) {
             const queueId = cached.queueId ? ` (#${cached.queueId})` : '';
             const retry = cached.retryCount != null ? ` 重试${cached.retryCount}次` : '';
-            return `⏳该图已经在队列了${queueId}${retry}，耐心等一下~`;
+            return `🔧 队列中${queueId}${retry}`;
         }
         return '⏳该图已在队列了，耐心等一下~';
     }
@@ -213,7 +213,9 @@ function buildBatchSummary(detailedResults, isAdmin = false) {
     const nonSuccessResults = detailedResults.filter(r => r.status !== 'success');
     if (nonSuccessResults.length === 0) return null;
 
-    const lines = [`📊 批量收藏报告 (${successCount}/${total} 成功)`];
+    const lines = [isAdmin
+        ? `🔧 批量收藏报告 (${successCount}/${total} 成功)`
+        : `📊 批量收藏报告 (${successCount}/${total} 成功)`];
 
     for (const r of nonSuccessResults) {
         const acc = [];
@@ -225,34 +227,48 @@ function buildBatchSummary(detailedResults, isAdmin = false) {
 
         switch (r.status) {
             case 'api_error':
-                lines.push(`⚠️ [${r.index}] ${r.type || '未知'}: ${r.detail || '处理异常'}${accStr}`);
+                lines.push(isAdmin
+                    ? `⚠️ [${r.index}] ${r.type || '未知'}: ${r.detail || '处理异常'}${accStr}`
+                    : `⚠️ [${r.index}] 处理异常`);
                 break;
             case 'queued':
-                lines.push(`⏳ [${r.index}] 后台队列${accStr}`);
+                lines.push(isAdmin
+                    ? `⏳ [${r.index}] 后台队列${accStr}`
+                    : `⏳ [${r.index}] 排队中`);
                 break;
             case 'archived':
-                lines.push(`📦 [${r.index}] 已归档${accStr}`);
+                lines.push(isAdmin
+                    ? `📦 [${r.index}] 已归档${accStr}`
+                    : `📦 [${r.index}] 已排入搜索`);
                 break;
             case 'archive_failed':
-                lines.push(`❌ [${r.index}] 归档失败${accStr}`);
+                lines.push(isAdmin
+                    ? `❌ [${r.index}] 归档失败${accStr}`
+                    : `❌ [${r.index}] 排队失败`);
                 break;
             case 'source_unavailable_archived':
-                lines.push(`📦 [${r.index}] 来源不可用，已重新排队: ${r.detail || ''}${accStr}`);
+                lines.push(isAdmin
+                    ? `📦 [${r.index}] 来源不可用，已重新排队: ${r.detail || ''}${accStr}`
+                    : `📦 [${r.index}] 来源暂时失效，已重新排队`);
                 break;
             case 'source_unavailable_failed':
-                lines.push(`❌ [${r.index}] 来源不可用，排队失败: ${r.detail || ''}${accStr}`);
+                lines.push(isAdmin
+                    ? `❌ [${r.index}] 来源不可用，排队失败: ${r.detail || ''}${accStr}`
+                    : `❌ [${r.index}] 来源暂时失效`);
                 break;
             case 'skipped':
                 lines.push(`⏭️ [${r.index}] ${r.detail || '已跳过'}`);
                 break;
             case 'dedup_completed':
-                lines.push(`📋 [${r.index}] 已有结果: ${r.detail || ''}${accStr}`);
+                lines.push(isAdmin
+                    ? `📋 [${r.index}] 已有收录: ${r.detail || ''}${accStr}`
+                    : `📋 [${r.index}] 已有收录`);
                 break;
             case 'dedup_queued':
-                lines.push(`⏳ [${r.index}] 已在队列中${accStr}`);
-                break;
             case 'already_queued':
-                lines.push(`⏳ [${r.index}] 已在队列中${accStr}`);
+                lines.push(isAdmin
+                    ? `⏳ [${r.index}] 已在队列中${accStr}`
+                    : `⏳ [${r.index}] 已在队列中`);
                 break;
             default:
                 lines.push(`❓ [${r.index}] ${r.status}${accStr}`);
@@ -261,18 +277,22 @@ function buildBatchSummary(detailedResults, isAdmin = false) {
 
     const archivedCount = detailedResults.filter(r => r.status === 'archived' || r.status === 'queued' || r.status === 'dedup_queued' || r.status === 'already_queued' || r.status === 'source_unavailable_archived').length;
     if (archivedCount > 0) {
-        lines.push(`📦 归档/队列: ${archivedCount}张`);
+        lines.push(`📦 排队/搜索中: ${archivedCount}张`);
     }
     const dedupCount = detailedResults.filter(r => r.status === 'dedup_completed').length;
     if (dedupCount > 0) {
-        lines.push(`📋 已有结果: ${dedupCount}张`);
+        lines.push(`📋 已有收录: ${dedupCount}张`);
     }
     // SSIM 比对未通过的复审提交（从成功入库的图片中收集）
     const ssimFailures = detailedResults.filter(r => r.ssimFailed);
     if (ssimFailures.length > 0) {
         for (const r of ssimFailures) {
-            const ssimInfo = r.ssimScore != null ? ` (SSIM ${(r.ssimScore * 100).toFixed(1)}%)` : '';
-            lines.push(`🔍 [${r.index}] ${r.type || '未知'} #${r.recordId || '?'} 比对未通过${ssimInfo}，已提交复审`);
+            if (isAdmin) {
+                const ssimInfo = r.ssimScore != null ? ` (SSIM ${(r.ssimScore * 100).toFixed(1)}%)` : '';
+                lines.push(`🔍 [${r.index}] ${r.type || '未知'} #${r.recordId || '?'} 比对未通过${ssimInfo}，已提交复审`);
+            } else {
+                lines.push(`🔍 [${r.index}] 已提交人工复审`);
+            }
         }
     }
 
@@ -325,10 +345,16 @@ export async function getContextFromUrl(context) {
         if (archiveResult && archiveResult.hasResult) {
             // 多图批量模式：追加汇总报告（所有用户可见）
             if (archiveResult.detailedResults?.length > 1) {
-                const summary = buildBatchSummary(archiveResult.detailedResults, isAdminPrivateChat(context));
-                if (summary) {
-                    global.replyMsg(context, summary, false, true);
+                let summary = buildBatchSummary(archiveResult.detailedResults, isAdminPrivateChat(context));
+                if (archiveResult.pendingNotificationText) {
+                    summary = (summary ? summary + '\n' : '') + archiveResult.pendingNotificationText;
                 }
+                if (summary) {
+                    _sendAndCacheArchiveMsg(context, summary, archiveResult.pendingArchiveQueueIds);
+                }
+            } else if (archiveResult.pendingNotificationText) {
+                // 单图成功但有待通知的异步结果
+                _sendAndCacheArchiveMsg(context, archiveResult.pendingNotificationText, archiveResult.pendingArchiveQueueIds);
             }
             return { type: '_processed' }; // 特殊标记，表示已处理
         }
@@ -371,55 +397,38 @@ export async function getContextFromUrl(context) {
     if (isImg) {
         const isAdmin = isAdminPrivateChat(context);
         const hasBatchResults = archiveResult?.detailedResults?.length > 1;
+        const pendingQueueIds = archiveResult?.pendingArchiveQueueIds || [];
         // 批量模式或管理员私聊：使用汇总报告格式
         if (hasBatchResults || (isAdmin && archiveResult?.detailedResults?.length > 0)) {
-            const summary = buildBatchSummary(archiveResult?.detailedResults || [], isAdmin);
+            let summary = buildBatchSummary(archiveResult?.detailedResults || [], isAdmin);
+            if (archiveResult?.pendingNotificationText) {
+                summary = (summary ? summary + '\n' : '') + archiveResult.pendingNotificationText;
+            }
             if (summary) {
-                global.replyMsg(context, summary, false, true);
+                _sendAndCacheArchiveMsg(context, summary, pendingQueueIds);
             } else {
                 // 全部成功但 hasResult 为 false（不应该发生，兜底）
                 global.replyMsg(context, `未搜索到收录图站`, false, true);
             }
         } else {
-            // 非管理员/非私聊：保持原有行为
-            let notFoundMsg = '暂时没有找到来源呢';
+            // 群聊/普通用户：简洁友好消息
+            let notFoundMsg = '暂未有图站收录';
             
             // 如果有图片已提交到归档队列，追加提示
             const queuedCount = archiveResult?.queuedCount || 0;
             if (queuedCount > 0) {
-                notFoundMsg += `，小春已经把${queuedCount}张排上队了`;
+                notFoundMsg += '，已排入搜索队列~';
             }
             
-            // 多图全部失败时，逐行显示每张图的ACC信息
-            if (failedResults.length > 1) {
-                // 多张图片全部失败
-                for (const failed of failedResults) {
-                    const accParts = [];
-                    if (failed.snSimilarity != null) {
-                        accParts.push(`Acc1: ${Math.round(failed.snSimilarity)}`);
-                    }
-                    if (failed.iqdbSimilarity != null) {
-                        accParts.push(`Acc2: ${Math.round(failed.iqdbSimilarity)}`);
-                    }
-                    if (accParts.length > 0) {
-                        notFoundMsg += `\n[${failed.index}] ${accParts.join(' ')}`;
-                    }
-                }
-            } else if (failedResults.length === 1) {
-                // 单张图片失败
-                const failed = failedResults[0];
-                const accParts = [];
-                if (failed.snSimilarity != null) {
-                    accParts.push(`Acc1: ${Math.round(failed.snSimilarity)}`);
-                }
-                if (failed.iqdbSimilarity != null) {
-                    accParts.push(`Acc2: ${Math.round(failed.iqdbSimilarity)}`);
-                }
-                if (accParts.length > 0) {
-                    notFoundMsg += `\n${accParts.join(' ')}`;
-                }
+            // 附加待通知的异步搜索结果
+            if (archiveResult?.pendingNotificationText) {
+                notFoundMsg += '\n' + archiveResult.pendingNotificationText;
             }
-            global.replyMsg(context, notFoundMsg, false, true);
+            if (pendingQueueIds.length > 0) {
+                _sendAndCacheArchiveMsg(context, notFoundMsg, pendingQueueIds);
+            } else {
+                global.replyMsg(context, notFoundMsg, false, true);
+            }
         }
     }
     return false;
@@ -681,18 +690,18 @@ const _pendingCheckCache = new Map();
 const PENDING_CHECK_INTERVAL_MS = 60_000;
 
 /**
- * 检查是否有待通知的异步搜索结果，有则发送并标记已通知
+ * 检查是否有待通知的异步搜索结果，构建通知文本并标记已通知
  * @param {Object} context 消息上下文
- * @returns {Promise<number>} 通知的结果数
+ * @returns {Promise<{text: string|null, count: number}>} 通知文本和结果数
  */
 async function checkAndNotifyPendingResults(context) {
     try {
         const apiContext = await getApiContext(context);
-        if (apiContext.qq_id == null) return 0;
+        if (apiContext.qq_id == null) return { text: null, count: 0 };
 
         // 60 秒内同一用户跳过查询
         const lastCheck = _pendingCheckCache.get(apiContext.qq_id);
-        if (lastCheck && Date.now() - lastCheck < PENDING_CHECK_INTERVAL_MS) return 0;
+        if (lastCheck && Date.now() - lastCheck < PENDING_CHECK_INTERVAL_MS) return { text: null, count: 0 };
         _pendingCheckCache.set(apiContext.qq_id, Date.now());
 
         let response;
@@ -706,31 +715,43 @@ async function checkAndNotifyPendingResults(context) {
             throw httpError;
         }
         const results = response.data?.data;
-        if (!results || !results.length) return 0;
+        if (!results || !results.length) return { text: null, count: 0 };
 
-        // 构建通知消息
-        const lines = [`📦 你有 ${results.length} 个搜索结果:`];
-        const queueIds = [];
-        for (const r of results) {
-            queueIds.push(r.id);
-            const source = r.matched_source || '未知';
-            const itemId = r.matched_item_id || '';
-            const status = r.status === 'completed' ? '✅' : '❌';
-            const sim = r.ssim_score != null ? ` (SSIM ${(r.ssim_score * 100).toFixed(1)}%)` : '';
-            const credit = r.credit_awarded ? ' +1积分' : '';
-            lines.push(`${status} ${source}/${itemId}${sim}${credit}`);
+        // 过滤掉来源未识别的记录（matched_source 为 null 或 "unknown"）
+        const validResults = results.filter(r => r.matched_source && r.matched_source !== 'unknown');
+        const queueIds = results.map(r => r.id);
+
+        // 构建通知消息（仅有效来源）
+        let notifyText = null;
+        if (validResults.length > 0) {
+            if (isAdminPrivateChat(context)) {
+                // 管理员私聊：完整调试信息
+                const lines = [`🔧 异步搜索完成 (${validResults.length}条):`];
+                for (const r of validResults) {
+                    const status = r.status === 'completed' ? '✅' : '❌';
+                    const credit = r.credit_awarded ? ' +1积分' : '';
+                    lines.push(`${status} ${r.matched_source}/${r.matched_item_id || ''}${credit}`);
+                }
+                notifyText = lines.join('\n');
+            } else {
+                // 群聊/普通用户：友好概括
+                const creditCount = validResults.filter(r => r.credit_awarded).length;
+                notifyText = `之前排队的${validResults.length}张图找到来源啦~`;
+                if (creditCount > 0) {
+                    notifyText += ` (+${creditCount}积分)`;
+                }
+            }
         }
-        global.replyMsg(context, lines.join('\n'), false, true);
 
-        // 标记已通知
+        // 标记全部已通知（包括 unknown 的，避免反复推送）
         await koharuAxios.post('/api/image-archive/mark-notified', {
             qq_id: apiContext.qq_id,
             queue_ids: queueIds,
         });
-        return results.length;
+        return { text: notifyText, count: validResults.length, archiveQueueIds: queueIds };
     } catch (error) {
         console.warn('通知检查失败（不影响收藏）:', error.message || error);
-        return 0;
+        return { text: null, count: 0, archiveQueueIds: [] };
     }
 }
 
@@ -801,7 +822,9 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
             return { recently_completed: true, queue_id: result.queue_id, result };
         }
         // 后端搜索有结果且标题有效
-        if (result?.title && result.title !== 'No results found') {
+        // 仅接受 status=matched（Flask 经 SSIM 验证的高置信匹配）
+        // matched_low_similarity 不作为有效匹配，回退到归档队列等待异步处理
+        if (result?.status === 'matched' && result?.title && result.title !== 'No results found') {
             const sourceUrl = result.source_url || '';
             const illustObj = matchUrlToIllust(sourceUrl);
             if (illustObj) {
@@ -809,6 +832,14 @@ async function fallbackToBackendSearch(imageUrl, localPath, context = null) {
             }
             console.warn(`[图片回退] Flask 命中结果但无法映射图站: source=${summarizeLogValue(sourceUrl, 88)}`);
             return { empty: true, reason: 'unmatched_source_url', result };
+        }
+        // 低相似度结果不作为有效匹配
+        if (result?.status === 'matched_low_similarity') {
+            console.log(
+                `[图片回退] Flask 低相似度结果已跳过（不入库）: ` +
+                `title=${summarizeLogValue(result.title, 48)} source=${summarizeLogValue(result.source_url, 88)}`
+            );
+            return { empty: true, reason: 'low_similarity', result };
         }
         const reason = result?.message || 'no_result';
         console.log(`[图片回退] Flask 搜索未命中: reason=${summarizeLogValue(reason, 72)}`);
@@ -1520,13 +1551,8 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                 lastErrorMessage: `${backendResult.illustObj?.type} #${backendResult.illustObj?.id}: ${processResult.error}`,
             });
             if (queueResult?.success) {
-                if (!isBatch) {
-                    const isAdmin = isAdminPrivateChat(context);
-                    if (isAdmin) {
-                        global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，等后台重新搜源~`, false, true);
-                    } else {
-                        global.replyMsg(context, '这张图的来源暂时失效，小春先排上队帮你重新找找~', false, true);
-                    }
+                if (!isBatch && isAdminPrivateChat(context)) {
+                    global.replyMsg(context, `🔧 来源失效 → 已重新入队 (#${queueResult.queue_id ?? '?'})`, false, true);
                 }
                 return {
                     outcome: 'archived',
@@ -1563,14 +1589,13 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         };
     } else if (backendResult?.already_queued) {
         // 后端队列预检：该图片已在搜索队列中
-        const isAdmin = isAdminPrivateChat(context);
         const r = backendResult.result || {};
         console.log(`图片存档 - 已在搜索队列 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
-        if (!isBatch) {
+        if (!isBatch && isAdminPrivateChat(context)) {
             const userMsg = buildDedupUserMessage({
                 status: 'already_queued', queueId: backendResult.queue_id,
                 retryCount: r.retry_count ?? null,
-            }, isAdmin);
+            }, true);
             if (userMsg) global.replyMsg(context, userMsg, false, true);
         }
         return {
@@ -1580,15 +1605,14 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         };
     } else if (backendResult?.recently_completed) {
         // 后端队列预检：该图片近期已搜索完成
-        const isAdmin = isAdminPrivateChat(context);
         const r = backendResult.result || {};
         console.log(`图片存档 - 近期已搜索 ${index}/${totalCount}: source=${r.matched_source || 'none'}`);
-        if (!isBatch) {
+        if (!isBatch && isAdminPrivateChat(context)) {
             const userMsg = buildDedupUserMessage({
                 status: 'recently_completed',
                 matchedSource: r.matched_source, matchedItemId: r.matched_item_id,
                 ssimScore: r.ssim_score ?? null,
-            }, isAdmin);
+            }, true);
             if (userMsg) global.replyMsg(context, userMsg, false, true);
         }
         return {
@@ -1598,12 +1622,8 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
         };
     } else if (backendResult?.queued) {
         console.log(`图片存档 - 后端搜索降级为异步 ${index}/${totalCount}: queue_id=${backendResult.queue_id}`);
-        if (!isBatch) {
-            if (isAdminPrivateChat(context)) {
-                global.replyMsg(context, `⏳ 搜索超时，已提交后台排队 (#${backendResult.queue_id})，有结果会告诉你~`, false, true);
-            } else {
-                global.replyMsg(context, '⏳ 搜索要花点时间，小春先排上队啦，有结果会告诉你哦~', false, true);
-            }
+        if (!isBatch && isAdminPrivateChat(context)) {
+            global.replyMsg(context, `🔧 搜索超时 → 异步排队 (#${backendResult.queue_id})`, false, true);
         }
         return {
             outcome: 'queued',
@@ -1630,8 +1650,8 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
             // 归档队列返回去重状态时向用户反馈
             const isAdmin = isAdminPrivateChat(context);
             if (qStatus === 'duplicate') {
-                if (!isBatch) {
-                    const userMsg = buildDedupUserMessage({ status: 'duplicate', queueId: queueResult.queue_id }, isAdmin);
+                if (!isBatch && isAdmin) {
+                    const userMsg = buildDedupUserMessage({ status: 'duplicate', queueId: queueResult.queue_id }, true);
                     if (userMsg) global.replyMsg(context, userMsg, false, true);
                 }
                 return {
@@ -1641,13 +1661,13 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                 };
             }
             if (qStatus === 'recently_completed') {
-                if (!isBatch) {
+                if (!isBatch && isAdmin) {
                     const userMsg = buildDedupUserMessage({
                         status: 'recently_completed',
                         matchedSource: queueResult.matched_source,
                         matchedItemId: queueResult.matched_item_id,
                         ssimScore: queueResult.ssim_score ?? null,
-                    }, isAdmin);
+                    }, true);
                     if (userMsg) global.replyMsg(context, userMsg, false, true);
                 }
                 return {
@@ -1656,13 +1676,9 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
                     detailedResult: { index, status: 'dedup_completed', detail: `${queueResult.matched_source || ''}/${queueResult.matched_item_id || ''}`, snSimilarity, iqdbSimilarity },
                 };
             }
-            // 正常入队
-            if (!isBatch) {
-                if (isAdmin) {
-                    global.replyMsg(context, `📦已加入搜索队列 (#${queueResult.queue_id ?? '?'})，有结果会通知你~`, false, true);
-                } else {
-                    global.replyMsg(context, '📦已加入搜索队列~', false, true);
-                }
+            // 正常入队（群聊抑制中间消息，由终态消息统一报告；管理员私聊保留调试信息）
+            if (!isBatch && isAdmin) {
+                global.replyMsg(context, `🔧 已入队 (#${queueResult.queue_id ?? '?'})`, false, true);
             }
             return {
                 outcome: 'archived',
@@ -1690,8 +1706,8 @@ async function handleBackendFallback({ img, context, isFromReply, index, totalCo
  */
 export async function ArchivedImg(context, isFromReply = false) {
 
-    // 前置通知检查：展示之前异步搜索的完成结果
-    await checkAndNotifyPendingResults(context);
+    // 前置通知检查：获取之前异步搜索的完成结果（不直接发送，由调用方合并到最终消息）
+    const pendingNotification = await checkAndNotifyPendingResults(context);
 
     // 得到图片链接并搜图
     const msg = context.message;
@@ -1703,7 +1719,7 @@ export async function ArchivedImg(context, isFromReply = false) {
         global.replyMsg(context, '部分图片无法获取，请尝试使用其他设备QQ发送', false, true);
     }
 
-    if (!imgs.length) return { hasResult: false, failedResults: [], queuedCount: 0 };
+    if (!imgs.length) return { hasResult: false, failedResults: [], queuedCount: 0, detailedResults: [], pendingNotificationText: pendingNotification.text, pendingArchiveQueueIds: pendingNotification.archiveQueueIds || [] };
 
     let hasAnyResult = false; // 是否有任何一张图片成功入库
     const failedResults = []; // 记录所有失败图片的相似度信息
@@ -1744,18 +1760,21 @@ export async function ArchivedImg(context, isFromReply = false) {
             );
             // 已完成的搜索：直接提示用户
             if (dedupStatus === 'recently_completed' && dedupData.matchedSource) {
-                if (!isBatch) {
-                    const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                if (!isBatch && isAdmin) {
+                    const userMsg = buildDedupUserMessage(dedupData, true);
                     if (userMsg) global.replyMsg(context, userMsg, false, true);
+                } else if (!isBatch) {
+                    // 非管理员：使用友好消息
+                    global.replyMsg(context, '✨ 感谢投稿~这张图已收录到文库啦', false, true);
                 }
                 detailedResults.push({ index: i + 1, status: 'dedup_completed', detail: `${dedupData.matchedSource}/${dedupData.matchedItemId || ''}` });
                 hasAnyResult = true;
                 continue;
             }
-            // 在队列中等待搜索：提示用户并跳过
+            // 在队列中等待搜索：提示用户并跳过（群聊抑制，由终态消息统一处理）
             if (dedupStatus === 'already_queued' || dedupStatus === 'queued' || dedupStatus === 'duplicate') {
-                if (!isBatch) {
-                    const userMsg = buildDedupUserMessage(dedupData, isAdmin);
+                if (!isBatch && isAdmin) {
+                    const userMsg = buildDedupUserMessage(dedupData, true);
                     if (userMsg) global.replyMsg(context, userMsg, false, true);
                 }
                 queuedCount++;
@@ -1817,6 +1836,14 @@ export async function ArchivedImg(context, isFromReply = false) {
                 console.log(`图片存档 - 匹配到图站 ${i + 1}/${imgs.length}:`, illustObj);
                 const _r1 = await processIllustObj(illustObj, context, isFromReply, img, isBatch);
                 hasAnyResult = true;
+                // 写入去重缓存（直接路径成功：SauceNAO/IQDB 高准确度 → 匹配图站 → 入库）
+                if (_r1?.success) {
+                    await setSearchDedupCache(getUniversalImgURL(img.url), {
+                        status: 'recently_completed',
+                        matchedSource: illustObj.type,
+                        matchedItemId: String(illustObj.id || ''),
+                    });
+                }
                 const _detail = { index: i + 1, status: _r1?.success ? 'success' : 'api_error', type: illustObj.type, detail: _r1?.error, snSimilarity, iqdbSimilarity };
                 if (_r1?.ssimFailed) { _detail.ssimFailed = true; _detail.ssimScore = _r1.ssimScore; _detail.recordId = illustObj.id; }
                 detailedResults.push(_detail);
@@ -1866,6 +1893,8 @@ export async function ArchivedImg(context, isFromReply = false) {
         failedResults,
         queuedCount,
         detailedResults,
+        pendingNotificationText: pendingNotification.text,
+        pendingArchiveQueueIds: pendingNotification.archiveQueueIds || [],
     };
 }
 
@@ -2271,7 +2300,12 @@ function getPixivRequestUrl(url) {
 
 export function checkRatingMsg(msgRet, selfId) {
     const cacheKey = buildRedisKey('RtMsg', selfId, msgRet.group_id, msgRet.message_id);
-    return getKeyObject(cacheKey);
+    return getKeyObject(cacheKey).then(obj => {
+        if (!obj && global.config.bot.debug) {
+            console.log(`[RtMsg] 缓存未命中: key=${cacheKey} group=${msgRet.group_id} msg=${msgRet.message_id}`);
+        }
+        return obj;
+    });
 }
 
 /**
@@ -2287,21 +2321,47 @@ export function formatTraceMessage(trace) {
     
     const lines = [];
     
-    // 头部信息：query
+    // 头部信息：query + 耗时 + 结果数
     const query = trace.original_query || '';
-    lines.push(`🔍query: "${query}"`);
+    let headerLine = `🔍 "${query}"`;
+    if (trace.search_duration_ms != null) {
+        headerLine += ` ⏱${trace.search_duration_ms}ms`;
+    }
+    if (trace.result_count != null) {
+        headerLine += ` 📊${trace.result_count}条`;
+    }
+    lines.push(headerLine);
     
     // 分词信息（如果有）
     const tokenization = trace.tokenization;
     if (tokenization && tokenization.tokens && tokenization.tokens.length > 0) {
         const tokens = tokenization.tokens;
-        lines.push(`tokenization:\n'${tokenization.original_query}'->[${tokens.map(t => `'${t}'`).join(', ')}]`);
+        lines.push(`分词: '${tokenization.original_query}' → [${tokens.map(t => `'${t}'`).join(', ')}]`);
     }
     
-    // 关键词追踪
+    // 匹配标签汇总（简明一览）
+    const tagSummary = trace.matched_tag_summary;
+    if (tagSummary && tagSummary.length > 0) {
+        const display = tagSummary.length > 8
+            ? tagSummary.slice(0, 8).join(', ') + ` …共${tagSummary.length}个`
+            : tagSummary.join(', ');
+        lines.push(`🏷 标签: ${display}`);
+    }
+    
+    // 结果摘要
+    const resultsSummary = trace.results_summary;
+    if (resultsSummary && resultsSummary.length > 0) {
+        const items = resultsSummary.map(r => {
+            const rating = r.rating ? `(${r.rating})` : '';
+            return `${r.source}#${r.id}${rating}`;
+        });
+        lines.push(`📋 ${items.join(' | ')}`);
+    }
+    
+    // 关键词追踪（紧凑格式）
     const keywords = trace.keywords || [];
     if (keywords.length > 0) {
-        lines.push('trace:');
+        lines.push('── 关键词解析 ──');
         for (const kw of keywords) {
             const line = formatKeywordTraceLine(kw);
             if (line) lines.push(line);
@@ -2318,58 +2378,211 @@ export function formatTraceMessage(trace) {
 }
 
 /**
- * 格式化单个关键词追踪行
- * 格式: '关键词'(match_type) -> resolution_type[hit_info] -> tag[display_name]
+ * 格式化单个关键词追踪行（紧凑格式）
  * @param {object} kw 关键词追踪对象
  * @returns {string} 格式化后的单行字符串
  */
 function formatKeywordTraceLine(kw) {
     const keyword = kw.keyword || '';
-    const matchType = kw.match_type || 'partial'; // exact | partial
+    const matchType = kw.match_type || 'partial';
     const resolution = kw.resolution || {};
-    const resolutionType = resolution.type; // direct | alias | not_found
+    const resolutionType = resolution.type;
     const matchedTags = resolution.matched_tags || [];
     const aliasInfo = resolution.alias_info;
     
-    // 匹配类型标记
-    const matchMark = `(${matchType})`;
+    const prefix = `'${keyword}'(${matchType})`;
     
     if (resolutionType === 'not_found') {
-        // 未找到: '关键词'(partial) -> not_found
-        return `'${keyword}'${matchMark} -> not_found`;
+        return `${prefix} → ✗ 未匹配`;
     } else if (resolutionType === 'alias') {
-        // 别名匹配: '要闻'(partial) -> alias[要闻] -> tags[脚掌, 脚趾]
         const aliasName = aliasInfo?.alias_name || keyword;
-        const tagNames = matchedTags.map(t => t.display_name || t.name);
-        return `'${keyword}'${matchMark}->alias[${aliasName}]->tags[${tagNames.join(', ')}]`;
+        const tagNames = matchedTags.map(t => {
+            const tagDisplay = t.display_name || t.name;
+            const hitDetails = t.hit_details || [];
+            if (hitDetails.length > 0) {
+                const hits = hitDetails.map(h => `${h.field || ''}=${h.highlight || h.value || ''}`).join('; ');
+                return `${tagDisplay}[${hits}]`;
+            }
+            return tagDisplay;
+        });
+        return `${prefix} → alias[${aliasName}] → ${tagNames.join(', ')}`;
     } else {
-        // direct 直接匹配
-        // 需要展示 hit_details 中的高亮信息
-        // 格式: '女仆'(partial) -> direct[zh=运动服〖女仆〗] -> tag[Jersey maid]
         if (matchedTags.length === 0) {
-            return `'${keyword}'${matchMark}->direct->(无匹配标签)`;
+            return `${prefix} → direct → (无匹配)`;
         }
-        
-        // 每个匹配的标签生成一行
-        const tagLines = [];
-        for (const tag of matchedTags) {
+        // 合并多个匹配标签到一行，显示所有命中字段
+        const parts = matchedTags.map(tag => {
             const hitDetails = tag.hit_details || [];
             const tagDisplay = tag.display_name || tag.name;
-            
             if (hitDetails.length > 0) {
-                // 有 hit_details，显示第一个命中信息
-                const hit = hitDetails[0];
-                const field = hit.field || '';
-                // 如果有 highlight 则用 highlight，否则用 value
-                const value = hit.highlight || hit.value || '';
-                tagLines.push(`${keyword}${matchMark}->direct[${field}=${value}]->tag[${tagDisplay}]`);
-            } else {
-                // 无 hit_details，简单显示
-                tagLines.push(`${keyword}${matchMark}->direct->tag[${tagDisplay}]`);
+                const hits = hitDetails.map(h => `${h.field || ''}=${h.highlight || h.value || ''}`).join('; ');
+                return `${tagDisplay}[${hits}]`;
+            }
+            return tagDisplay;
+        });
+        return `${prefix} → ${parts.join(', ')}`;
+    }
+}
+
+/**
+ * 发送入库相关消息并缓存 RtMsg（供 /trace 查询）
+ * @param {object} context 消息上下文
+ * @param {string} msg 消息内容
+ * @param {number[]} archiveQueueIds 关联的归档队列 ID 列表
+ */
+function _sendAndCacheArchiveMsg(context, msg, archiveQueueIds = []) {
+    global.replyMsg(context, msg, false, true).then(msgRet => {
+        if (msgRet?.retcode === 0 && msgRet.data?.message_id) {
+            const record = { type: 'archive_notification' };
+            if (archiveQueueIds.length > 0) {
+                record.archiveQueueIds = archiveQueueIds;
+            }
+            const cacheKey = buildRedisKey('RtMsg', context.self_id, context.group_id, msgRet.data.message_id);
+            setKeyObject(cacheKey, record, 60 * 60 * 24 * 3);
+        }
+    });
+}
+
+/**
+ * 格式化入库追踪信息为 QQ 消息
+ * @param {object} archiveData 后端 /api/image-archive/trace/<id> 返回的数据
+ * @returns {string}
+ */
+function formatArchiveTraceMessage(archiveData) {
+    const lines = [];
+    lines.push(`📦 入库追踪 #${archiveData.id}`);
+    
+    // 状态
+    const statusEmoji = {
+        'completed': '✅', 'pending': '⏳', 'processing': '🔄',
+        'failed': '❌', 'expired': '💤',
+    };
+    lines.push(`状态: ${archiveData.status} ${statusEmoji[archiveData.status] || ''}`);
+    
+    // 来源
+    if (archiveData.matched_source) {
+        lines.push(`来源: ${archiveData.matched_source} #${archiveData.matched_item_id || '?'}`);
+    }
+    
+    // SSIM
+    if (archiveData.ssim_score != null) {
+        let ssimLine = `SSIM: ${(archiveData.ssim_score * 100).toFixed(1)}%`;
+        if (archiveData.ssim_threshold_used != null) {
+            ssimLine += ` (阈值: ${(archiveData.ssim_threshold_used * 100).toFixed(1)}%)`;
+        }
+        if (archiveData.matched_page_index != null) {
+            ssimLine += ` 匹配页: ${archiveData.matched_page_index + 1}`;
+        }
+        lines.push(ssimLine);
+    }
+    
+    // 敏感度
+    if (archiveData.sensitivity_level) {
+        lines.push(`敏感度: ${archiveData.sensitivity_level}`);
+    }
+    
+    // 审核
+    if (archiveData.needs_manual_review) {
+        lines.push(`审核: ${archiveData.review_status || 'pending_review'}`);
+    }
+    
+    // 重试
+    if (archiveData.retry_count > 0 || archiveData.status === 'failed') {
+        lines.push(`重试: ${archiveData.retry_count ?? 0}/3`);
+    }
+    
+    // 错误信息
+    if (archiveData.last_error_type) {
+        lines.push(`错误: ${archiveData.last_error_type}${archiveData.last_error_message ? ' - ' + archiveData.last_error_message.substring(0, 80) : ''}`);
+    }
+    
+    // 时间
+    if (archiveData.created_at) {
+        lines.push(`提交: ${archiveData.created_at.replace('T', ' ').substring(0, 19)}`);
+    }
+    
+    return lines.join('\n');
+}
+
+/**
+ * 完整 /trace 输出：搜索追踪 + 入库追踪（如果有）
+ * 从 RtMsg 缓存对象中提取 trace 和 archiveQueueId，
+ * 如果有 archiveQueueId 则调用后端 API 获取入库详情
+ * @param {object} illustObj RtMsg 缓存对象
+ * @returns {Promise<string>} 格式化后的完整 trace 消息
+ */
+export async function fetchAndFormatFullTrace(illustObj) {
+    const parts = [];
+    
+    // 根据 illustObj.trace 是否存在区分消息来源：
+    // - trace 存在 → 搜索流程（/来点），只显示搜索追踪
+    // - trace 不存在 → 入库流程（/收藏），只显示入库追踪
+    const isSearchMessage = !!illustObj.trace;
+    
+    if (isSearchMessage) {
+        // 搜索消息：只显示搜索追踪信息
+        parts.push(formatTraceMessage(illustObj.trace));
+    } else {
+        // 入库消息：查询入库追踪信息
+        const archiveTrace = await _fetchArchiveTrace(illustObj);
+        if (archiveTrace) {
+            parts.push(archiveTrace);
+        } else {
+            parts.push('未找到该作品的入库记录');
+        }
+    }
+    
+    let result = parts.join('\n');
+    if (result.length > 3990) {
+        result = result.substring(0, 3990) + '\n...';
+    }
+    return result;
+}
+
+/**
+ * 查询入库追踪信息（内部辅助）
+ * @param {object} illustObj RtMsg 缓存对象 {id, type, archiveQueueId?, archiveQueueIds?}
+ * @returns {Promise<string|null>} 格式化的入库追踪文本，或 null
+ */
+async function _fetchArchiveTrace(illustObj) {
+    // 优先用 archiveQueueId(s)
+    const queueIds = illustObj.archiveQueueIds || (illustObj.archiveQueueId ? [illustObj.archiveQueueId] : []);
+    if (queueIds.length > 0) {
+        const lines = [];
+        for (const qId of queueIds) {
+            try {
+                const response = await koharuAxios.get(`/api/image-archive/trace/${qId}`);
+                if (response.data?.success && response.data?.data) {
+                    lines.push(formatArchiveTraceMessage(response.data.data));
+                } else {
+                    lines.push(`📦 入库 #${qId}: 查询失败`);
+                }
+            } catch (e) {
+                lines.push(`📦 入库 #${qId}: ${e.response?.status === 404 ? '记录已删除' : '查询异常'}`);
             }
         }
-        return tagLines.join('\n    ');
+        return lines.join('\n');
     }
+    
+    // 无显式 queueId — 按作品来源+ID 查最近的入库记录
+    if (illustObj.id && illustObj.type && illustObj.type !== 'no_result') {
+        const sourceMap = { pixiv: 'pixiv', danbooru: 'danbooru', ehentai: 'ehentai' };
+        const source = sourceMap[illustObj.type];
+        if (source) {
+            try {
+                const response = await koharuAxios.get('/api/image-archive/trace-by-artwork', {
+                    params: { source, item_id: illustObj.id }
+                });
+                if (response.data?.success && response.data?.data) {
+                    return formatArchiveTraceMessage(response.data.data);
+                }
+            } catch (e) {
+                // 查询失败静默忽略
+            }
+        }
+    }
+    
+    return null;
 }
 
 /**
@@ -2712,7 +2925,7 @@ function parseXpPeriod(rawParam) {
  * @returns {Promise<boolean>}
  */
 export async function myXpDiagnosisReport(context) {
-    const rawParam = context.message.replace('/我的xp', '');
+    const rawParam = context.message.replace(/\/我的xp/i, '');
     const period = parseXpPeriod(rawParam);
 
     // 用户冷却：每天 1 次，零点重置（参考占卜功能）
@@ -2768,7 +2981,7 @@ export async function groupXpDiagnosisReport(context) {
         return true;
     }
 
-    const rawParam = context.message.replace('/群友xp', '');
+    const rawParam = context.message.replace(/\/群友xp/i, '');
     const period = parseXpPeriod(rawParam);
 
     // 群组冷却：每天 1 次，零点重置

@@ -13,7 +13,7 @@ import corpus from './plugin/corpus.mjs';
 import cyberCourt from './plugin/cyberCourt/index.mjs';
 import getGroupFile from './plugin/getGroupFile.mjs';
 import IqDB from './plugin/iqdb.mjs';
-import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, myXpDiagnosisReport, groupXpDiagnosisReport, getHelpCard, breastReduction, searchResults } from './plugin/koharuApi.mjs';
+import koharuApi, { checkRatingMsg, illustRating, getCommon, illustRemove, pushDoujinshi, formatTraceMessage, fetchAndFormatFullTrace, myXpDiagnosisReport, groupXpDiagnosisReport, getHelpCard, breastReduction, searchResults } from './plugin/koharuApi.mjs';
 import like from './plugin/like.mjs';
 import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
@@ -199,19 +199,21 @@ async function replyToBotHandle(context, rMsgData) {
   // 去除消息中的CQ码，只保留纯文本内容
   const pureText = context.message.replace(/\[CQ:[^\]]+\]/g, '').trim();
 
+  // 处理 /trace 命令 — 提前检测，避免缓存未命中时静默退出
+  if (pureText === '/trace' && global.config.bot.KoharuAPI) {
+    const illustObj = await checkRatingMsg(rMsgData, context.self_id);
+    if (illustObj) {
+      const traceMsg = await fetchAndFormatFullTrace(illustObj);
+      global.replyMsg(context, traceMsg, false, true);
+    } else {
+      console.log(`[/trace] 缓存未命中: key=RtMsg:${context.self_id}:${rMsgData.group_id}:${rMsgData.message_id}`);
+      global.replyMsg(context, '该消息的追踪缓存已失效或不存在（3天TTL）', false, true);
+    }
+    return;
+  }
+
   const illustObj = await checkRatingMsg(rMsgData, context.self_id);
   if (illustObj) {
-    // 处理 /trace 命令 - 查看搜索追踪信息（支持所有类型包括 no_result）
-    if (pureText === '/trace' && global.config.bot.KoharuAPI) {
-      if (illustObj.trace) {
-        const traceMsg = formatTraceMessage(illustObj.trace);
-        global.replyMsg(context, traceMsg, false, true);
-      } else {
-        global.replyMsg(context, '未返回具体跟踪信息', false, true);
-      }
-      return;
-    }
-    
     // 无结果消息不支持评分和删除
     if (illustObj.type === 'no_result') {
       return;
@@ -426,10 +428,10 @@ async function commonHandle(e, context) {
   }
 
   // XP 诊断报告（个人 / 群组）
-  if (config.KoharuAPI && context.message.startsWith('/我的xp')) {
+  if ((config.KoharuAPI) && context.message.toLowerCase().startsWith('/我的xp')) {
     if (await myXpDiagnosisReport(context)) return true;
   }
-  if (config.KoharuAPI && context.message.startsWith('/群友xp')) {
+  if ((config.KoharuAPI) && context.message.toLowerCase().startsWith('/群友xp')) {
     if (await groupXpDiagnosisReport(context)) return true;
   }
 
@@ -620,6 +622,25 @@ async function privateAndAtMsg(e, context) {
     }
   }
 
+  // 私聊中回复机器人消息处理（/trace、评分等）
+  if (context.message_type === 'private') {
+    try {
+      const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
+      if (rMsgId) {
+        const { data } = await bot('get_msg', { message_id: Number(rMsgId) });
+        if (data && data.sender.user_id === context.self_id) {
+          await replyToBotHandle(context, data);
+          e.stopPropagation();
+          return;
+        }
+      }
+    } catch (error) {
+      if (global.config.bot.debug) {
+        console.log('[private] 回复消息解析失败:', error);
+      }
+    }
+  }
+
   if (await commonHandle(e, context)) {
     e.stopPropagation();
     return;
@@ -722,6 +743,25 @@ async function groupMsg(e, context) {
       context.user_id,
       nickname
     );
+  }
+
+  // 回复机器人消息处理（不带@时也能触发 /trace、评分等命令）
+  if (context.message_type === 'group') {
+    try {
+      const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
+      if (rMsgId) {
+        const { data } = await bot('get_msg', { message_id: Number(rMsgId) });
+        if (data && data.sender.user_id === context.self_id) {
+          await replyToBotHandle(context, data);
+          e.stopPropagation();
+          return;
+        }
+      }
+    } catch (error) {
+      if (global.config.bot.debug) {
+        console.log('[groupMsg] 回复消息解析失败:', error);
+      }
+    }
   }
 
   if ((await commonHandle(e, context)) || (await getGroupFile(context))) {
