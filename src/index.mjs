@@ -19,6 +19,7 @@ import ocr from './plugin/ocr/index.mjs';
 import { rmdHandler } from './plugin/reminder.mjs';
 import saucenao, { snDB } from './plugin/saucenao.mjs';
 import sendSetu from './plugin/setu.mjs';
+import ssimReview, { handleReviewReply } from './plugin/ssimReview.mjs';
 import vits from './plugin/vits.mjs';
 import whatanime from './plugin/whatanime.mjs';
 import { loadConfig } from './setup/config.mjs';
@@ -596,6 +597,22 @@ async function privateAndAtMsg(e, context) {
         break;
     }
     console.log(debugMsgDeleteBase64Content(context.message));
+  }
+
+  // 管理员私聊 · SSIM 复核（命令入口 + 会话内回复分发）
+  if (context.message_type === 'private' && isSendByAdmin(context)) {
+    try {
+      if (await ssimReview(context)) {
+        e.stopPropagation();
+        return;
+      }
+      if (await handleReviewReply(context)) {
+        e.stopPropagation();
+        return;
+      }
+    } catch (err) {
+      logError('[ssimReview] 处理异常:'); logError(err);
+    }
   }
 
   if (context.message_type === 'group') {

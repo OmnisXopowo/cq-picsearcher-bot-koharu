@@ -46,9 +46,12 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
   let lowAcc = false;
   let excess = false;
   let topSimilarity = null; // 最高相似度
+  // QQ CDN URL 不可达时（远程服务器无法访问），自动回退本地上传重试一次
+  let triggerLocalRetry = false;
 
   if (apiKeys[apiKeyIndex]) {
-    await getSearchResult(hosts[hostIndex], apiKeys[apiKeyIndex], img, db)
+    const runOnce = async (forceLocalUpload = false) =>
+      getSearchResult(hosts[hostIndex], apiKeys[apiKeyIndex], img, db, { forceLocalUpload })
       .then(async ret => {
         const data = ret.data;
 
@@ -223,6 +226,10 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
               if (isImageUrlIssue) {
                 console.warn(`[saucenao] 远程服务器无法访问图片 URL (HTTP ${httpCode}): ${failedUrl.slice(0, 80)}...`);
                 msg = `saucenao-${hostIndex} SauceNAO 无法访问图片链接 (HTTP ${httpCode})，QQ 图片链接可能已过期或不可公网访问`;
+                // 标记需要本地上传重试（仅当当前不是本地上传模式时）
+                if (!global.config.bot.saucenaoLocalUpload) {
+                  triggerLocalRetry = true;
+                }
               } else {
                 console.warn(`[saucenao] 远程目标服务器异常 (HTTP ${httpCode}): ${failedUrl.slice(0, 80)}...`);
                 msg = `saucenao-${hostIndex} 远程服务器异常 (HTTP ${httpCode}: ${new URL(failedUrl).hostname})`;
@@ -262,6 +269,22 @@ async function doSearch(img, db, debug = false, withoutThumbnail = false) {
           logError(e);
         }
       });
+
+    await runOnce(false);
+
+    // QQ CDN URL 不可达时自动重试本地上传一次
+    if (triggerLocalRetry && !success) {
+      const localPath = await img.getPath();
+      if (localPath) {
+        console.warn(`[saucenao] 检测 QQ CDN URL 不可达，自动回退本地上传重试 hostIndex=${hostIndex}`);
+        // 重置可恢复状态（保留 excess/warnMsg 累积仍可读）
+        msg = global.config.bot.replys.failed;
+        triggerLocalRetry = false;
+        await runOnce(true);
+      } else {
+        console.warn('[saucenao] QQ CDN URL 不可达但无本地图片路径，跳过本地上传重试');
+      }
+    }
   } else {
     msg = '未配置 saucenaoApiKey，无法使用 saucenao 搜图';
   }
@@ -298,7 +321,7 @@ async function getShareText({ url, title, thumbnail, author_url, source ,without
  * @param {number} [db=999] 搜索库
  * @returns Axios 对象
  */
-async function getSearchResult(host, api_key, img, db = 999) {
+async function getSearchResult(host, api_key, img, db = 999, { forceLocalUpload = false } = {}) {
   if (!/^https?:\/\//.test(host)) host = `https://${host}`;
 
   const dbParam = {};
@@ -329,12 +352,14 @@ async function getSearchResult(host, api_key, img, db = 999) {
   const maskedKey = api_key ? `${api_key.slice(0, 4)}****${api_key.slice(-4)}` : '(none)';
 
   // ========== 分支 A：本地上传模式（仅 Layer 1+2：多代理+直连） ==========
-  if (global.config.bot.saucenaoLocalUpload || !img.isUrlValid) {
+  if (forceLocalUpload || global.config.bot.saucenaoLocalUpload || !img.isUrlValid) {
     const path = await img.getPath();
     if (path) {
       const form = new FormData();
       form.append('file', readFileSync(path), 'image');
-      console.log(`[saucenao] 使用本地上传模式 (key=${maskedKey})`);
+      const reason = forceLocalUpload ? '强制本地上传(QQ CDN URL 不可达)'
+        : (global.config.bot.saucenaoLocalUpload ? '配置启用本地上传' : 'URL 无效');
+      console.log(`[saucenao] 使用本地上传模式 (key=${maskedKey}) [${reason}]`);
       return Axios.searchPost(url, form, {
         params,
         headers: form.getHeaders(),
@@ -388,8 +413,27 @@ async function getSearchResult(host, api_key, img, db = 999) {
       console.log('[saucenao] Layer 4: 跳过 FlareSolverr（未配置 flaresolverr.url）');
     }
 
+    // --- Layer 5: 自动回退到本地文件上传（QQ CDN 短期 URL / 远程不可达兜底） ---
+    // 适用场景：URL 模式 4 层全部失败时，QQ CDN URL 已过期或仅鉴权访问，
+    // SauceNAO 远程拉取必然失败，改用 multipart 上传本地图片字节继续尝试。
+    try {
+      const path = await img.getPath();
+      if (path) {
+        const form = new FormData();
+        form.append('file', readFileSync(path), 'image');
+        console.warn(`[saucenao] Layer 5: URL 模式全部失败，自动回退本地上传 (key=${maskedKey})`);
+        return await Axios.searchPost(url, form, {
+          params,
+          headers: form.getHeaders(),
+        });
+      }
+      console.warn('[saucenao] Layer 5: 无可用本地图片路径，跳过本地上传回退');
+    } catch (localErr) {
+      console.error(`[saucenao] Layer 5: ✗ 本地上传回退失败: ${localErr?.message || localErr}`);
+    }
+
     // 所有层都失败
-    throw new Error('[saucenao] 所有请求方式均失败（多代理→直连→Puppeteer→FlareSolverr）');
+    throw new Error('[saucenao] 所有请求方式均失败（多代理→直连→Puppeteer→FlareSolverr→本地上传）');
   }
 
   // eslint-disable-next-line no-throw-literal

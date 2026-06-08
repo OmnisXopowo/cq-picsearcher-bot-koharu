@@ -19,6 +19,18 @@ const isWebP = (buf) =>
   buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46 &&
   buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50;
 
+const validateImageBuffer = async (buffer) => {
+  if (!buffer || buffer.length === 0) throw new Error('图片缓存数据为空');
+
+  try {
+    const metadata = await sharp(buffer).metadata();
+    if (!metadata.format) throw new Error('无法识别图片格式');
+    return metadata;
+  } catch (e) {
+    throw new Error(`缓存数据不是可识别图片: ${e?.message || e}`);
+  }
+};
+
 export const createCache = async (key, data) => {
   let filename = md5(key);
   const regex = /\.[a-zA-Z0-9]+$/;
@@ -40,6 +52,8 @@ export const createCache = async (key, data) => {
       console.warn('[cache] WebP → PNG 转换失败，保留原格式（safeJimpRead 将兜底）:', e.message);
     }
   }
+
+  await validateImageBuffer(buffer);
 
   const filepath = resolve(CACHE_DIR, filename);
   Fs.ensureDirSync(CACHE_DIR);

@@ -1,4 +1,7 @@
 import Axios from 'axios';
+import { createHash } from 'crypto';
+import FormData from 'form-data';
+import { pathToFileURL } from 'url';
 import _ from 'lodash-es';
 import { getImgs, hasImage } from '../index.mjs';
 import axios from '../utils/axiosProxy.mjs';
@@ -11,7 +14,7 @@ import { getUniversalImgURL } from '../utils/image.mjs';
 import { imgAntiShieldingFromFilePath } from '../utils/imgAntiShielding.mjs';
 import logError from '../utils/logError.mjs';
 import { getRawMessage } from '../utils/message.mjs';
-import { getKeyObject, setKeyObject, buildRedisKey, buildRedisKeyPattern } from '../utils/redisClient.mjs';
+import { getKeyObject, setKeyObject, buildRedisKey, buildRedisKeyPattern, redis } from '../utils/redisClient.mjs';
 import voiceManager from '../voicesBank/VoiceManager.mjs';
 import IqDB from './iqdb.mjs';
 import { getLocalReverseProxyURL } from './pximg.mjs';
@@ -20,7 +23,7 @@ import saucenao, { snDB } from './saucenao.mjs';
 // Koharu API 专用 axios 实例
 const koharuApiBaseUrl = global.config.bot.koharuApiBaseUrl || 'http://127.0.0.1:5000';
 const koharuApiToken = global.config.bot.koharuApiToken || '';
-const koharuAxios = Axios.create({
+export const koharuAxios = Axios.create({
     baseURL: koharuApiBaseUrl,
     headers: koharuApiToken ? { 'Authorization': `Bearer ${koharuApiToken}` } : {}
 });
@@ -53,6 +56,38 @@ const cooldownManager = new CooldownManager();
 // ── CDN URL 搜索去重缓存（Redis，TTL 1 天） ──
 const SEARCH_DEDUP_TTL = 86400; // 1 天（秒）
 const SEARCH_DEDUP_PREFIX = 'img_search_dedup';
+const ARCHIVE_REQUEST_LOCK_TTL = 30 * 60;
+const ARCHIVE_SUMMARY_DEDUP_TTL = 5 * 60;
+const PENDING_NOTIFY_LOCK_TTL = 60;
+
+function shortHash(value, length = 16) {
+    return createHash('sha1').update(String(value ?? '')).digest('hex').slice(0, length);
+}
+
+function buildArchiveRequestLockKey(context) {
+    const botScope = `bot:${context.self_id ?? 'unknown'}`;
+    const scope = context.message_type === 'group'
+        ? `group:${context.group_id ?? 0}`
+        : `private:${context.user_id ?? 0}`;
+    const messageIdentity = context.message_id != null
+        ? `msg:${context.message_id}`
+        : `raw:${shortHash(`${context.user_id ?? 0}:${context.message || ''}`)}`;
+    return `koharu_archive_request_lock:${botScope}:${scope}:${messageIdentity}`;
+}
+
+async function acquireArchiveRequestLock(context) {
+    try {
+        const key = buildArchiveRequestLockKey(context);
+        const result = await redis.set(key, Date.now().toString(), 'NX', 'EX', ARCHIVE_REQUEST_LOCK_TTL);
+        if (result !== 'OK') {
+            console.warn(`[收藏去重] 已有相同收藏请求处理中，跳过重复事件: key=${key}`);
+            return false;
+        }
+    } catch (error) {
+        console.warn('[收藏去重] Redis 请求锁失败（继续处理）:', error.message || error);
+    }
+    return true;
+}
 
 /**
  * 构建图片搜索去重的 Redis key
@@ -90,6 +125,20 @@ async function getSearchDedupCache(normalizedUrl) {
 async function setSearchDedupCache(normalizedUrl, result) {
     try {
         const key = buildSearchDedupKey(normalizedUrl);
+        if (result?.status === 'duplicate' && result.queueId == null) {
+            const existing = await getKeyObject(key, null);
+            const existingStatus = existing?.status;
+            const keepExisting = existing
+                && ['queued', 'pending', 'already_queued', 'recently_completed'].includes(existingStatus)
+                && (existing.queueId != null || existing.matchedSource);
+            if (keepExisting) {
+                console.log(
+                    `[去重缓存] 保留已有状态，忽略无 queue_id 的 duplicate: ` +
+                    `old=${existingStatus} queue_id=${existing.queueId ?? 'none'}`
+                );
+                return;
+            }
+        }
         await setKeyObject(key, { ...result, cachedAt: Date.now() }, SEARCH_DEDUP_TTL);
     } catch (e) {
         console.warn('[去重缓存] Redis 写入失败（不影响流程）:', e.message);
@@ -164,6 +213,12 @@ function summarizeLogValue(value, maxLength = 96) {
     }
 
     return normalized.length > maxLength ? `${normalized.slice(0, maxLength)}...` : normalized;
+}
+
+function buildKoharuCacheImageUrl(cacheKey) {
+    if (!cacheKey) return null;
+    const baseUrl = koharuApiBaseUrl.replace(/\/+$/, '');
+    return `${baseUrl}/api/image-cache/serve/${encodeURIComponent(cacheKey)}`;
 }
 
 function unwrapKoharuApiPayload(response, endpoint) {
@@ -393,7 +448,7 @@ export async function getContextFromUrl(context) {
         }
     }
 
-    // 如果没有找到匹配项，返回false
+    // 图片消息已完成收藏流程反馈，避免继续进入默认搜图。
     if (isImg) {
         const isAdmin = isAdminPrivateChat(context);
         const hasBatchResults = archiveResult?.detailedResults?.length > 1;
@@ -430,6 +485,7 @@ export async function getContextFromUrl(context) {
                 global.replyMsg(context, notFoundMsg, false, true);
             }
         }
+        return { type: '_processed' };
     }
     return false;
 }
@@ -619,8 +675,10 @@ async function submitToArchiveQueue(img, context, options = {}) {
  * @param {number|string} linkedRecordId - 关联记录 ID
  * @param {object} context - 消息上下文
  * @param {string|null} sourceImageUrl - 来源全尺寸图片 URL（由 /add 端点返回，直接传入可跳过 DB 查询）
+ * @param {boolean} suppressMessage - 是否抑制提示消息
+ * @param {number|null} sourcePageIndexOverride - 来源页索引（0-based，未提供时从 sourceImageUrl 解析）
  */
-async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context, sourceImageUrl = null, suppressMessage = false) {
+async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, context, sourceImageUrl = null, suppressMessage = false, sourcePageIndexOverride = null) {
     // URL 入库没有图片对象，跳过
     if (!img) return null;
 
@@ -635,6 +693,9 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
         const normalizedSourceUrl = (sourceImageUrl && typeof sourceImageUrl === 'string' && sourceImageUrl.startsWith('http'))
             ? sourceImageUrl
             : null;
+        const sourcePageIndex = Number.isInteger(sourcePageIndexOverride)
+            ? sourcePageIndexOverride
+            : extractPixivPageIndexFromUrl(normalizedSourceUrl);
 
         const payload = {
             image_url: img.url,
@@ -644,31 +705,82 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             linked_record_type: linkedRecordType,
             linked_record_id: typeof linkedRecordId === 'string' ? parseInt(linkedRecordId) : linkedRecordId,
             source_image_url: normalizedSourceUrl,
+            source_page_index: sourcePageIndex,
             qq_id: apiContext.qq_id,
             group_id: apiContext.group_id,
         };
 
         console.log(
             `[图片缓存] 开始提交: type=${linkedRecordType} id=${linkedRecordId} ` +
-            `source_url=${normalizedSourceUrl ? summarizeLogValue(normalizedSourceUrl, 88) : 'none'}`
+            `source_url=${normalizedSourceUrl ? summarizeLogValue(normalizedSourceUrl, 88) : 'none'} ` +
+            `page_index=${sourcePageIndex ?? 'none'}`
         );
 
         const response = await koharuAxios.post('/api/image-cache/submit', payload);
         const result = response.data;
+
+        // Danbooru 来源下载在后端受 CF 阻断时，尝试由 QQBot 侧下载后补传源图。
+        // 仅在 submit 结果仍为 pending 且无 source_cache_key 时触发，避免重复上传。
+        if (
+            linkedRecordType === 'danbooru_collection' &&
+            normalizedSourceUrl &&
+            result?.image_role === 'pending' &&
+            !result?.source_cache_key
+        ) {
+            try {
+                const backfillResult = await backfillSourceImageForFlask({
+                    sourceUrl: normalizedSourceUrl,
+                    linkedRecordType,
+                    linkedRecordId: payload.linked_record_id,
+                });
+                if (backfillResult?.success) {
+                    Object.assign(result, backfillResult);
+                    console.log(
+                        `[图片缓存] 源图补传成功: type=${linkedRecordType} id=${linkedRecordId} ` +
+                        `cache_key=${backfillResult.cache_key || 'none'} source_cache_key=${backfillResult.source_cache_key || 'none'}`
+                    );
+                }
+            } catch (backfillError) {
+                console.warn(
+                    `[图片缓存] 源图补传失败（不影响主流程）: type=${linkedRecordType} id=${linkedRecordId} ` +
+                    `err=${backfillError?.message || backfillError}`
+                );
+            }
+        }
+
+        const cacheUrl = result.cache_url
+            ? new URL(result.cache_url, koharuApiBaseUrl).toString()
+            : buildKoharuCacheImageUrl(result.cache_key);
+        const sourceCacheUrl = result.source_cache_url
+            ? new URL(result.source_cache_url, koharuApiBaseUrl).toString()
+            : buildKoharuCacheImageUrl(result.source_cache_key);
+        const type = linkedRecordType === 'illust_collection' ? 'pixiv' : linkedRecordType === 'danbooru_collection' ? 'danbooru' : linkedRecordType;
+        const cacheResult = {
+            ssimPassed: result.ssim_passed,
+            ssimScore: result.ssim_score ?? null,
+            type,
+            recordId: linkedRecordId,
+            cacheKey: result.cache_key ?? null,
+            cacheUrl,
+            sourceCacheKey: result.source_cache_key ?? null,
+            sourceCacheUrl,
+            imageRole: result.image_role || null,
+            message: result.message || '',
+        };
         console.log(
             `[图片缓存] 提交完成: cache_key=${result.cache_key} ssim=${result.ssim_score} ` +
-            `passed=${result.ssim_passed} role=${result.image_role || 'unknown'}`
+            `passed=${result.ssim_passed} role=${result.image_role || 'unknown'} ` +
+            `source_cache_key=${result.source_cache_key || 'none'}`
         );
         // SSIM 检查未通过，通知用户已提交复审
         if (result.ssim_passed === false) {
-            const type = linkedRecordType === 'illust_collection' ? 'pixiv' : 'danbooru';
             const ssimInfo = result.ssim_score != null ? ` (SSIM ${(result.ssim_score * 100).toFixed(1)}%)` : '';
             if (!suppressMessage) {
                 global.replyMsg(context, `⚠️ ${type} #${linkedRecordId} 图片比对未通过${ssimInfo}，已提交复审`, false, true);
             }
-            return { ssimPassed: false, ssimScore: result.ssim_score, type, recordId: linkedRecordId };
+            return { ...cacheResult, ssimPassed: false };
         }
-        return null;
+        return cacheResult;
     } catch (error) {
         // 缓存提交失败不影响入库结果，但需要输出详细错误
         const status = error?.response?.status;
@@ -678,6 +790,79 @@ async function submitImageCacheAfterAdd(img, linkedRecordType, linkedRecordId, c
             (detail ? ` | detail: ${detail}` : '')
         );
         return null;
+    }
+}
+
+async function backfillSourceImageForFlask({ sourceUrl, linkedRecordType, linkedRecordId }) {
+    if (!sourceUrl || !linkedRecordType || linkedRecordId == null) {
+        return null;
+    }
+
+    console.log(`[图片缓存] 触发源图补传: ${summarizeLogValue(sourceUrl, 100)}`);
+
+    const response = await axios.download(sourceUrl, {
+        useProxy: true,
+        usePuppeteer: true,
+        useFlareSolverr: true,
+    });
+    const sourceBuffer = Buffer.from(response.data);
+    if (!sourceBuffer || sourceBuffer.length < 100) {
+        throw new Error(`源图下载数据无效: ${sourceBuffer?.length || 0} bytes`);
+    }
+
+    const formData = new FormData();
+    formData.append('file', sourceBuffer, {
+        filename: `source_${linkedRecordType}_${linkedRecordId}.jpg`,
+        contentType: 'application/octet-stream',
+    });
+    formData.append('source_url', sourceUrl);
+    formData.append('source_site', inferSourceSiteFromUrl(sourceUrl));
+    formData.append('linked_record_type', linkedRecordType);
+    formData.append('linked_record_id', String(linkedRecordId));
+
+    const uploadResp = await koharuAxios.post('/api/image-cache/upload-source', formData, {
+        headers: {
+            ...formData.getHeaders(),
+        },
+        maxBodyLength: 25 * 1024 * 1024,
+    });
+    return uploadResp.data;
+}
+
+function inferSourceSiteFromUrl(url) {
+    if (!url || typeof url !== 'string') return 'unknown';
+    const lower = url.toLowerCase();
+    if (lower.includes('donmai.us') || lower.includes('danbooru')) return 'danbooru';
+    if (lower.includes('pximg.net') || lower.includes('pixiv.net')) return 'pixiv';
+    if (lower.includes('e-hentai.org') || lower.includes('exhentai.org')) return 'ehentai';
+    return 'unknown';
+}
+
+function extractPixivPageIndexFromUrl(url) {
+    if (!url || typeof url !== 'string') return null;
+    const match = url.match(/_p(\d+)/);
+    if (!match) return null;
+    const pageIndex = Number.parseInt(match[1], 10);
+    return Number.isNaN(pageIndex) ? null : pageIndex;
+}
+
+async function sendDanbooruFlaskCacheFallback(cachePromise, texts, illustId, context, shouldReply) {
+    if (!cachePromise) return false;
+    try {
+        const cacheResult = await cachePromise;
+        if (cacheResult?.imageRole === 'pending' && !cacheResult?.sourceCacheUrl) {
+            console.warn(`[Danbooru消息] Flask 仅返回 pending 原图缓存，作为最后反馈兜底发送 (illustId: ${illustId})`);
+        }
+        const imageUrl = cacheResult?.sourceCacheUrl || cacheResult?.cacheUrl;
+        if (!imageUrl) {
+            console.warn(`[Danbooru消息] Flask 缓存未返回可补发图片 URL (illustId: ${illustId})`);
+            return false;
+        }
+        console.log(`[Danbooru消息] 使用 Flask 缓存图片补发: ${summarizeLogValue(imageUrl, 100)}`);
+        return await sendImgWithAntiShieldFallback([...texts, CQ.img(imageUrl)].join('\n'), imageUrl, illustId, context, shouldReply);
+    } catch (error) {
+        console.error('[Danbooru消息] Flask 缓存补发失败:', error?.message || error);
+        return false;
     }
 }
 
@@ -703,6 +888,14 @@ async function checkAndNotifyPendingResults(context) {
         const lastCheck = _pendingCheckCache.get(apiContext.qq_id);
         if (lastCheck && Date.now() - lastCheck < PENDING_CHECK_INTERVAL_MS) return { text: null, count: 0 };
         _pendingCheckCache.set(apiContext.qq_id, Date.now());
+
+        const pendingLockKey = `koharu_pending_notify_check:${apiContext.qq_id}`;
+        try {
+            const lockResult = await redis.set(pendingLockKey, Date.now().toString(), 'NX', 'EX', PENDING_NOTIFY_LOCK_TTL);
+            if (lockResult !== 'OK') return { text: null, count: 0, archiveQueueIds: [] };
+        } catch (lockError) {
+            console.warn('[通知检查] Redis pending 锁失败（继续检查）:', lockError.message || lockError);
+        }
 
         let response;
         try {
@@ -1949,7 +2142,8 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             } else {
                 // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
                 const pixivSourceUrl = result.meta_single_page || result.meta_large || null;
-                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context, pixivSourceUrl, isBatch);
+                const pixivSourcePageIndex = extractPixivPageIndexFromUrl(pixivSourceUrl);
+                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'illust_collection', illustObj.id, context, pixivSourceUrl, isBatch, pixivSourcePageIndex);
                 // 构建合并消息（参考Danbooru的实现方式）
                 const texts = [];
                 texts.push(`${result.message}:${result.author}<${result.title}>\n${result.caption}`);
@@ -2012,7 +2206,7 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
         // 批量模式：等待 SSIM 检查完成并收集结果
         if (isBatch && _ssimPromise) {
             const ssimResult = await _ssimPromise;
-            if (ssimResult && !ssimResult.ssimPassed) {
+            if (ssimResult && ssimResult.ssimPassed === false) {
                 _processStatus.ssimFailed = true;
                 _processStatus.ssimScore = ssimResult.ssimScore;
             }
@@ -2029,7 +2223,8 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
             } else {
                 // 成功入库后提交图片缓存（直接传入源图片 URL 避免 DB 竞态）
                 const danbooruSourceUrl = result.file_url || result.large_file_url || null;
-                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl, isBatch);
+                const danbooruSourcePageIndex = extractPixivPageIndexFromUrl(danbooruSourceUrl);
+                _ssimPromise = submitImageCacheAfterAdd(sourceImg, 'danbooru_collection', illustObj.id, context, danbooruSourceUrl, isBatch, danbooruSourcePageIndex);
                 const texts = [];
                 if (result.pixiv_id) {
                     texts.push(`${result.message}\n来源：https://www.pixiv.net/artworks/${result.pixiv_id}`);
@@ -2040,29 +2235,33 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
                     global.replyMsg(context, '是限制级？？ 不可以涩涩！ 死刑！', false, true);
                 } else if (result.large_file_url || result.file_url) {
                     const imageUrl = result.large_file_url || result.file_url;
+                    let imageSent = false;
                     try {
                         if (!imageUrl.startsWith('https://cdn.donmai.us/')) {
                             try {
                                 const Rvhost = global.config.reverseProxy;
                                 const url = Rvhost ? `${Rvhost}/${imageUrl}` : imageUrl;
                                 const imgCQ = await downloadImage(url, context, { useNetworkProxy: !!Rvhost, allowUrlFallback: false });
-                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
+                                imageSent = await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - Rvhost URL 失败，尝试原始URL:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
-                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
+                                imageSent = await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             }
                         } else {
                             try {
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: true, allowUrlFallback: false });
-                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
+                                imageSent = await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             } catch (error) {
                                 console.warn('图片下载 - 所有方式失败，降级为URL直发:', error.message);
                                 const imgCQ = await downloadImage(imageUrl, context, { useNetworkProxy: false, allowUrlFallback: true });
-                                await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
+                                imageSent = await sendImgWithAntiShieldFallback([...texts, imgCQ].join('\n'), imageUrl, illustObj.id, context, shouldReply);
                             }
                         }
-                        replyCollectReply(context, result);
+                        if (!imageSent) {
+                            imageSent = await sendDanbooruFlaskCacheFallback(_ssimPromise, texts, illustObj.id, context, shouldReply);
+                        }
+                        if (imageSent) replyCollectReply(context, result);
                     } catch (e) {
                         console.error('投稿 - 处理出错:', e);
                     }
@@ -2094,7 +2293,7 @@ async function processIllustObj(illustObj, context, shouldReply = true, sourceIm
         // 批量模式：等待 SSIM 检查完成并收集结果
         if (isBatch && _ssimPromise) {
             const ssimResult = await _ssimPromise;
-            if (ssimResult && !ssimResult.ssimPassed) {
+            if (ssimResult && ssimResult.ssimPassed === false) {
                 _processStatus.ssimFailed = true;
                 _processStatus.ssimScore = ssimResult.ssimScore;
             }
@@ -2209,6 +2408,10 @@ export async function searchResults(context) {
 
 
 export default async (context) => {
+
+    if (!await acquireArchiveRequestLock(context)) {
+        return true;
+    }
 
     const illustObj = await getContextFromUrl(context);
     if (illustObj) {
@@ -2430,7 +2633,25 @@ function formatKeywordTraceLine(kw) {
  * @param {string} msg 消息内容
  * @param {number[]} archiveQueueIds 关联的归档队列 ID 列表
  */
-function _sendAndCacheArchiveMsg(context, msg, archiveQueueIds = []) {
+async function _sendAndCacheArchiveMsg(context, msg, archiveQueueIds = []) {
+    try {
+        const botScope = `bot:${context.self_id ?? 'unknown'}`;
+        const scope = context.message_type === 'group'
+            ? `group:${context.group_id ?? 0}`
+            : `private:${context.user_id ?? 0}`;
+        const messageIdentity = context.message_id != null
+            ? `msg:${context.message_id}`
+            : `raw:${shortHash(`${context.user_id ?? 0}:${context.message || ''}:${msg}`, 24)}`;
+        const sendKey = `koharu_archive_summary_sent:${botScope}:${scope}:${messageIdentity}`;
+        const sendResult = await redis.set(sendKey, Date.now().toString(), 'NX', 'EX', ARCHIVE_SUMMARY_DEDUP_TTL);
+        if (sendResult !== 'OK') {
+            console.warn(`[归档消息] 跳过重复汇总发送: key=${sendKey}`);
+            return;
+        }
+    } catch (error) {
+        console.warn('[归档消息] Redis 发送去重失败（继续发送）:', error.message || error);
+    }
+
     global.replyMsg(context, msg, false, true).then(msgRet => {
         if (msgRet?.retcode === 0 && msgRet.data?.message_id) {
             const record = { type: 'archive_notification' };
@@ -2689,6 +2910,63 @@ function extractLocalPathFromCQ(msg) {
 }
 
 /**
+ * 从 CQ 码字符串中提取本地图片文件并读取为 base64
+ * @param {string|null} rawCQ 原始 CQ 码字符串
+ * @returns {Promise<string|null>} base64 字符串（不带 data: 头），失败返回 null
+ */
+async function extractLocalImageBase64(rawCQ) {
+    if (!rawCQ) return null;
+    const localPath = extractLocalPathFromCQ(rawCQ);
+    if (!localPath) return null;
+    try {
+        const { readFileSync, existsSync, statSync } = await import('fs');
+        if (!existsSync(localPath)) {
+            console.warn(`[咪咪缩小术-本地兜底] 本地文件不存在: ${localPath}`);
+            return null;
+        }
+        const stat = statSync(localPath);
+        // 限制 20MB，避免超大文件导致 API 请求异常
+        if (stat.size > 20 * 1024 * 1024) {
+            console.warn(`[咪咪缩小术-本地兜底] 本地文件过大跳过: ${localPath} (${stat.size} bytes)`);
+            return null;
+        }
+        const b64 = readFileSync(localPath).toString('base64');
+        console.log(`[咪咪缩小术-本地兜底] 已读取本地文件 ${localPath} (${stat.size} bytes -> base64 ${b64.length} chars)`);
+        return b64;
+    } catch (e) {
+        console.warn(`[咪咪缩小术-本地兜底] 读取本地文件失败: ${e?.message || e}`);
+        return null;
+    }
+}
+
+/**
+ * 调用 koharu API，遇到 image_download_failed 时自动回退到本地文件 base64 重试一次
+ * Flask 在 QQ CDN URL 下载失败时会返回 { status: 'error', error_code: 'image_download_failed', user_message: ... }
+ * @param {string} url API 路径
+ * @param {object} payload 请求体（含 image_url）
+ * @param {string|null} rawCQ 原始 CQ 码（用于提取本地路径）
+ * @param {string} tag 日志标签
+ * @returns {Promise<object>} Flask 响应 data
+ */
+async function callKoharuApiWithLocalFallback(url, payload, rawCQ, tag = 'API') {
+    const { data } = await koharuAxios.post(url, payload);
+    if (data?.error_code !== 'image_download_failed') return data;
+
+    console.warn(`[${tag}] Flask 下载 QQ CDN URL 失败 (error_code=image_download_failed)，尝试改用本地文件 base64 重试`);
+    const b64 = await extractLocalImageBase64(rawCQ);
+    if (!b64) {
+        console.warn(`[${tag}] 无法获取本地文件 base64，放弃兜底，返回原失败响应`);
+        return data;
+    }
+
+    const fallbackPayload = { ...payload, image_base64: b64 };
+    delete fallbackPayload.image_url;
+    const { data: retryData } = await koharuAxios.post(url, fallbackPayload);
+    console.log(`[${tag}] 本地文件 base64 重试完成: success=${retryData?.success}, status=${retryData?.status}`);
+    return retryData;
+}
+
+/**
  * 发送 Danbooru 图片消息，若 retcode 1200 则对图片进行反和谐处理后重发，仍失败则降级 URL 直发
  * @param {string} msg 完整消息（文字 + 图片 CQ 码）
  * @param {string} fallbackUrl 图片原始 URL（用于降级直发）
@@ -2709,7 +2987,7 @@ async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context
     };
 
     const ret = await global.replyMsg(context, msg, false, shouldReply);
-    if (ret?.retcode === 0) { saveRecord(ret); return; }
+    if (ret?.retcode === 0) { saveRecord(ret); return true; }
 
     if (ret?.retcode === 1200) {
         console.warn(`[Danbooru消息] retcode 1200 → 尝试反和谐重发 (illustId: ${illustId})`);
@@ -2720,7 +2998,7 @@ async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context
                 const base64 = await imgAntiShieldingFromFilePath(localPath, 0b1);
                 const antiMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img64(base64));
                 const ret2 = await global.replyMsg(context, antiMsg, false, shouldReply);
-                if (ret2?.retcode === 0) { saveRecord(ret2); console.log('[Danbooru消息] ✓ 反和谐重发成功'); return; }
+                if (ret2?.retcode === 0) { saveRecord(ret2); console.log('[Danbooru消息] ✓ 反和谐重发成功'); return true; }
                 console.warn('[Danbooru消息] 反和谐重发失败，降级为URL直发');
             } catch (e) {
                 console.error('[Danbooru消息] 反和谐处理出错:', e);
@@ -2731,14 +3009,27 @@ async function sendImgWithAntiShieldFallback(msg, fallbackUrl, illustId, context
         // 降级：URL 直发
         const fallbackMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img(fallbackUrl));
         const ret3 = await global.replyMsg(context, fallbackMsg, false, shouldReply);
-        if (ret3?.retcode === 0) saveRecord(ret3);
-        else console.error(`[Danbooru消息] URL直发也失败 (retcode: ${ret3?.retcode})`);
+        if (ret3?.retcode === 0) { saveRecord(ret3); return true; }
+        else {
+            console.error(`[Danbooru消息] URL直发也失败 (retcode: ${ret3?.retcode})`);
+            if (localPath && !msg.includes('file=file://')) {
+                try {
+                    const localFileMsg = msg.replace(/\[CQ:image,[^\]]+\]/, CQ.img(pathToFileURL(localPath).href));
+                    const ret4 = await global.replyMsg(context, localFileMsg, false, shouldReply);
+                    if (ret4?.retcode === 0) { saveRecord(ret4); console.log('[Danbooru消息] ✓ 本地文件 URI 重发成功'); return true; }
+                    console.error(`[Danbooru消息] 本地文件 URI 重发也失败 (retcode: ${ret4?.retcode})`);
+                } catch (e) {
+                    console.error('[Danbooru消息] 本地文件 URI 重发出错:', e);
+                }
+            }
+        }
     } else {
         console.error(`[Danbooru消息] ✗ 发送失败 (retcode: ${ret?.retcode}, status: ${ret?.status})`);
         console.error(`[Danbooru消息] 群号: ${context.group_id}, 用户: ${context.user_id}`);
         console.error(`[Danbooru消息] 错误信息: ${ret?.message}`);
         console.error('[Danbooru消息] 完整返回:', ret);
     }
+    return false;
 }
 
 /**
@@ -3185,15 +3476,19 @@ export async function breastReduction(context) {
         if (!cleanMsg.startsWith('/咪咪缩小术')) return false;
 
         let imageUrl = null;
+        // 同时保存原始 CQ 码字符串（含 file= 字段），用于 QQ CDN URL 失效时提取本地文件路径兜底
+        let imageRawCQ = null;
 
         // 方式 1: 回复消息中的图片
         const rMsgId = _.get(/^\[CQ:reply,id=(-?\d+).*\]/.exec(context.message), 1);
         if (rMsgId) {
             const { data } = await global.bot('get_msg', { message_id: Number(rMsgId) });
             if (data) {
-                const imgs = getImgs(getRawMessage(data));
+                const rawMessage = getRawMessage(data);
+                const imgs = getImgs(rawMessage);
                 if (imgs.length === 1) {
                     imageUrl = imgs[0].rawUrl || imgs[0].url;
+                    imageRawCQ = rawMessage;
                 } else if (imgs.length > 1) {
                     global.replyMsg(context, '只支持单张图片的咪咪缩小术，请回复只有一张图片的消息', false, true);
                     return true;
@@ -3206,6 +3501,7 @@ export async function breastReduction(context) {
             const inlineImgs = getImgs(context.message);
             if (inlineImgs.length === 1) {
                 imageUrl = inlineImgs[0].rawUrl || inlineImgs[0].url;
+                imageRawCQ = context.message;
             } else if (inlineImgs.length > 1) {
                 global.replyMsg(context, '只支持单张图片的咪咪缩小术哦～', false, true);
                 return true;
@@ -3225,13 +3521,17 @@ export async function breastReduction(context) {
         // Step 1: 调用独立检测 API（视觉模型分析图片内容）
         let detectResult;
         try {
-            const { data } = await koharuAxios.post('/api/ai-image/detect', {
-                plugin_id: 'breast_reduction',
-                image_url: imageUrl,
-                qq_id: apiCtx.qq_id,
-                group_id: apiCtx.group_id || undefined,
-            });
-            detectResult = data;
+            detectResult = await callKoharuApiWithLocalFallback(
+                '/api/ai-image/detect',
+                {
+                    plugin_id: 'breast_reduction',
+                    image_url: imageUrl,
+                    qq_id: apiCtx.qq_id,
+                    group_id: apiCtx.group_id || undefined,
+                },
+                imageRawCQ,
+                '咪咪缩小术-检测',
+            );
         } catch (error) {
             handleApiError(error, context, '咪咪缩小术');
             return true;
@@ -3248,13 +3548,24 @@ export async function breastReduction(context) {
         }
 
         // Step 2: 执行编辑（跳过检测，因为已在 Step 1 完成）
-        const { data: result } = await koharuAxios.post('/api/ai-image/process', {
-            plugin_id: 'breast_reduction',
-            image_url: imageUrl,
-            qq_id: apiCtx.qq_id,
-            group_id: apiCtx.group_id || undefined,
-            skip_detection: true,
-        });
+        let result;
+        try {
+            result = await callKoharuApiWithLocalFallback(
+                '/api/ai-image/process',
+                {
+                    plugin_id: 'breast_reduction',
+                    image_url: imageUrl,
+                    qq_id: apiCtx.qq_id,
+                    group_id: apiCtx.group_id || undefined,
+                    skip_detection: true,
+                },
+                imageRawCQ,
+                '咪咪缩小术-编辑',
+            );
+        } catch (error) {
+            handleApiError(error, context, '咪咪缩小术');
+            return true;
+        }
 
         // 构建回复消息
         const parts = [];

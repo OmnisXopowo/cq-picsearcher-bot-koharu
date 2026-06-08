@@ -296,6 +296,7 @@ class Puppeteer {
       await page.setRequestInterception(true);
       
       let imageBuffer = null;
+      const targetPathname = new URL(url).pathname;
       
       // 拦截请求，只允许图片资源
       page.on('request', request => {
@@ -314,10 +315,17 @@ class Puppeteer {
       // 监听响应，捕获图片数据
       page.on('response', async response => {
         const responseUrl = response.url();
-        if (responseUrl === url || responseUrl.includes(new URL(url).pathname)) {
+        if (responseUrl === url || responseUrl.includes(targetPathname)) {
           try {
+            const status = response.status();
+            const contentType = String(response.headers()['content-type'] || '').toLowerCase();
+            if (status < 200 || status >= 400 || !contentType.startsWith('image/')) {
+              console.warn(`[Puppeteer] 忽略非图片响应: status=${status} content-type=${contentType || '(empty)'}`);
+              return;
+            }
+
             const buffer = await response.buffer();
-            if (buffer && buffer.length > 1000) { // 确保不是错误页面
+            if (buffer && buffer.length > 0) {
               imageBuffer = buffer;
               console.log(`[Puppeteer] 捕获图片响应: ${buffer.length} bytes`);
             }
@@ -342,6 +350,8 @@ class Puppeteer {
         imageBuffer = await page.evaluate(async (imgUrl) => {
           try {
             const response = await fetch(imgUrl);
+            const contentType = response.headers.get('content-type') || '';
+            if (!response.ok || !contentType.toLowerCase().startsWith('image/')) return null;
             const arrayBuffer = await response.arrayBuffer();
             return Array.from(new Uint8Array(arrayBuffer));
           } catch (e) {

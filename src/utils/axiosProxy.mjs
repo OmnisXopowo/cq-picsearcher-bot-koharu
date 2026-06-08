@@ -24,6 +24,15 @@ function createAxios(httpsAgent, ua) {
   });
 }
 
+function looksLikeImageBuffer(buffer) {
+  if (!buffer || buffer.length < 8) return false;
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) return true;
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return true;
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x38) return true;
+  if (buffer[0] === 0x52 && buffer[1] === 0x49 && buffer[2] === 0x46 && buffer[3] === 0x46 && buffer.slice(8, 12).toString() === 'WEBP') return true;
+  return false;
+}
+
 /** @type {Axios} */
 let client = {};
 
@@ -259,45 +268,19 @@ async function download(url, opts = {}) {
 
 /**
  * 使用 FlareSolverr 下载图片
- * FlareSolverr 会返回 HTML 页面，需要解析 img src 并用获取的 Cookie 重新请求
+ * 先让 FlareSolverr 完成挑战并写入 cookie jar，再用同一会话请求图片二进制。
  * @param {string} url 图片 URL
  * @param {object} fsConfig FlareSolverr 配置
  * @returns {Promise<Buffer>}
  */
 async function downloadWithFlareSolverr(url, fsConfig) {
-  const axios = (await import('axios')).default;
-  
-  // 调用 FlareSolverr API
-  const response = await axios.post(`${fsConfig.url}/v1`, {
-    cmd: 'request.get',
-    url: url,
-    session: fsConfig.session || undefined,
-    maxTimeout: fsConfig.maxTimeout || 60000
-  }, { timeout: 90000 });
-  
-  if (response.data.status !== 'ok') {
-    throw new Error(`FlareSolverr 返回错误: ${response.data.message}`);
+  const { flareSolverr } = await import('./flareSolverr.mjs');
+  await flareSolverr.get(url);
+  const imageBuffer = Buffer.from(await flareSolverr.getImage(url));
+  if (!looksLikeImageBuffer(imageBuffer)) {
+    throw new Error(`FlareSolverr 返回的不是图片数据 (${imageBuffer.length} bytes)`);
   }
-  
-  const solution = response.data.solution;
-  
-  // 构建 Cookie 字符串
-  const cookieStr = solution.cookies
-    .map(c => `${c.name}=${c.value}`)
-    .join('; ');
-  
-  // 使用获取的 Cookie 和 User-Agent 重新请求图片
-  const imageResponse = await axios.get(url, {
-    responseType: 'arraybuffer',
-    headers: {
-      'Cookie': cookieStr,
-      'User-Agent': solution.userAgent,
-      'Referer': 'https://danbooru.donmai.us/'
-    },
-    timeout: 30000
-  });
-  
-  return Buffer.from(imageResponse.data);
+  return imageBuffer;
 }
 
 // 针对 client/cfClient 的便捷 get/post 导出函数

@@ -8,6 +8,13 @@ const ROTATE_LEFT = 0b10;
 const ROTATE_RIGHT = 0b100;
 const ROTATE_DOWN = 0b1000;
 
+function normalizeImageBuffer(input, label) {
+  if (!input) throw new Error(`${label}为空，无法反和谐处理`);
+  const buffer = Buffer.isBuffer(input) ? input : Buffer.from(input);
+  if (buffer.length === 0) throw new Error(`${label}大小为 0，无法反和谐处理`);
+  return buffer;
+}
+
 /**
  * 图片反和谐处理
  * @param {ArrayBuffer} arrayBuffer
@@ -15,7 +22,7 @@ const ROTATE_DOWN = 0b1000;
  * @returns base64
  */
 export async function imgAntiShieldingFromArrayBuffer(arrayBuffer, mode) {
-  const img = await safeJimpRead(Buffer.from(arrayBuffer));
+  const img = await safeJimpRead(normalizeImageBuffer(arrayBuffer, '图片数据'));
   return await imgAntiShielding(img, mode);
 }
 
@@ -26,7 +33,7 @@ export async function imgAntiShieldingFromArrayBuffer(arrayBuffer, mode) {
  * @returns {Promise<string>} base64 字符串（不含 data:...;base64, 前缀）
  */
 export async function imgAntiShieldingFromFilePath(filePath, mode) {
-  const buffer = readFileSync(filePath);
+  const buffer = normalizeImageBuffer(readFileSync(filePath), `图片文件 ${filePath}`);
   const img = await safeJimpRead(buffer);
   return await imgAntiShielding(img, mode);
 }
